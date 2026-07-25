@@ -24,11 +24,13 @@ def test_prismqml_release_is_pinned_and_installed() -> None:
     assert version("prismqml") == EXPECTED_PRISMQML_VERSION
 
 
-def test_settings_delegates_update_feedback_to_prismqml() -> None:
+def test_settings_uses_prismqml_default_update_toast() -> None:
     source = _read("qml/SettingsPage.qml")
 
-    assert "AutoUpdaterProgressDialogPresenter" in source
-    assert "feedbackPresenter: updateFeedbackPresenter" in source
+    assert "AutoUpdater {" in source
+    assert "AutoUpdaterProgressDialogPresenter" not in source
+    assert "feedbackPresenter:" not in source
+    assert "notifyWhenUpToDate: true" in source
     assert "onClicked: autoUpdater.check()" in source
     assert "statusText" not in source
     assert "onUpToDateNotified" not in source

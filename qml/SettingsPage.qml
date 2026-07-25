@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // 设置页面
-// 自动更新入口:只提供宿主配置并调用引擎门面，状态反馈与完整流程由 PrismQML 编排。
+// 自动更新入口:只提供宿主配置并调用引擎门面，使用 PrismQML 默认右下角 Toast。
 import QtQuick
 import PrismQML
 
@@ -14,18 +14,11 @@ Item {
         return Enums.iconPath + name + ".svg"
     }
 
-    Component {
-        id: updateFeedbackPresenter
-
-        AutoUpdaterProgressDialogPresenter {}
-    }
-
     AutoUpdater {
         id: autoUpdater
         updater: appUpdater
         silentArgs: appInstallerSilentArgs
         notifyWhenUpToDate: true
-        feedbackPresenter: updateFeedbackPresenter
     }
 
     ScrollArea {
