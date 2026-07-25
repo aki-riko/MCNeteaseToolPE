@@ -34,6 +34,12 @@ class LegacyPylintUnavailable(RuntimeError):
     """Raised when the optional Python 2.7 runtime is not installed."""
 
 
+def _subprocess_creation_flags() -> int:
+    """Prevent console windows for child processes in packaged Windows apps."""
+
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 def _candidate_roots() -> list[Path]:
     roots: list[Path] = []
     source_root = Path(__file__).resolve().parents[1]
@@ -68,6 +74,7 @@ def _runtime_command() -> tuple[str, list[str]]:
                 stderr=subprocess.PIPE,
                 timeout=10,
                 check=False,
+                creationflags=_subprocess_creation_flags(),
             )
         except (OSError, subprocess.TimeoutExpired):
             probe = None
@@ -208,6 +215,7 @@ def _execute_worker_stream(
             stderr=subprocess.PIPE,
             cwd=working_directory,
             env=_child_environment(),
+            creationflags=_subprocess_creation_flags(),
         )
     except OSError as error:
         raise LegacyPylintUnavailable(f"Python 2.7 代码审核启动失败: {error}") from error
@@ -283,6 +291,7 @@ def _execute_worker(
             env=_child_environment(),
             timeout=_timeout_seconds(),
             check=False,
+            creationflags=_subprocess_creation_flags(),
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         raise LegacyPylintUnavailable(f"Python 2.7 代码审核启动失败: {error}") from error

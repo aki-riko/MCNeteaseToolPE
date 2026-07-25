@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -251,6 +253,34 @@ def test_python27_worker_count_is_adaptive_and_configurable(monkeypatch) -> None
     monkeypatch.setenv(WORKER_COUNT_ENV, "0")
     with pytest.raises(ValueError, match="必须大于 0"):
         legacy_pylint_runner._worker_count(100)
+
+
+def test_python27_subprocesses_disable_windows_consoles() -> None:
+    expected = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    assert legacy_pylint_runner._subprocess_creation_flags() == expected
+
+    source_path = Path(legacy_pylint_runner.__file__).resolve()
+    syntax_tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    process_calls = [
+        node
+        for node in ast.walk(syntax_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "subprocess"
+        and node.func.attr in {"Popen", "run"}
+    ]
+
+    assert len(process_calls) == 3
+    for call in process_calls:
+        creation_flags = next(
+            (keyword.value for keyword in call.keywords if keyword.arg == "creationflags"),
+            None,
+        )
+        assert isinstance(creation_flags, ast.Call)
+        assert isinstance(creation_flags.func, ast.Name)
+        assert creation_flags.func.id == "_subprocess_creation_flags"
 
 
 def test_missing_python27_runtime_is_advisory_only(tmp_path: Path, monkeypatch) -> None:
