@@ -1,0 +1,6 @@
+# Build and verification dependencies.
+-r requirements.txt
+Nuitka==2.8.10
+ordered-set==4.1.0
+zstandard==0.25.0
+pytest==9.1.1

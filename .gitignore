@@ -1,0 +1,25 @@
+# 构建产物
+/build/
+/out/
+test/out/
+*.user
+
+# Python/Nuitka 与 QML 构建缓存
+*.qmlc
+*.jsc
+*.pdb
+*.exe
+
+# Python 缓存(移植调试可能产生)
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+nuitka-crash-report.xml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

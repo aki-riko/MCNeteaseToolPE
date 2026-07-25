@@ -1,0 +1,216 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: CI/CD
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.12"
+  PYTHON27_MSI_URL: "https://www.python.org/ftp/python/2.7.18/python-2.7.18.msi"
+  PYTHON27_GET_PIP_URL: "https://bootstrap.pypa.io/pip/2.7/get-pip.py"
+  INNO_CHINESE_LANGUAGE_URL: "https://raw.githubusercontent.com/jrsoftware/issrc/683ee7eabfbce807f901c5da83fc5ff1a3ecb693/Files/Languages/ChineseSimplified.isl"
+  INNO_CHINESE_LANGUAGE_SHA256: "6753be2c5e2740d859900fd902824db2ec568da5c5b52486524c9762d778b0b0"
+
+jobs:
+  test:
+    name: Test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-build.txt
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_PLUGIN_PATH: ""
+          QML2_IMPORT_PATH: ""
+          QML_IMPORT_PATH: ""
+        run: python -m pytest -q
+
+  release:
+    name: Build and publish Windows release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+
+      - name: Validate release version
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+\.\d+$') {
+              throw "发布标签必须符合 vX.Y.Z.W: $env:RELEASE_TAG"
+          }
+          $sourceVersion = (python -c "from src.config import APP_VERSION; print(APP_VERSION)").Trim()
+          if ($sourceVersion -ne $env:RELEASE_TAG) {
+              throw "源码版本 $sourceVersion 与标签 $env:RELEASE_TAG 不一致"
+          }
+          $releaseVersion = $env:RELEASE_TAG.Substring(1)
+          "RELEASE_VERSION=$releaseVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install build dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-build.txt
+
+      - name: Install Python 2.7 audit runtime
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP "python-2.7.18.msi"
+          $runtimeRoot = Join-Path $env:RUNNER_TEMP "python27"
+          $getPip = Join-Path $env:RUNNER_TEMP "get-pip.py"
+          curl.exe --fail --location --retry 3 --output $installer $env:PYTHON27_MSI_URL
+          $install = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+              "/i", $installer, "/qn", "TARGETDIR=$runtimeRoot", "ALLUSERS=1"
+          )
+          if ($install.ExitCode -ne 0) {
+              throw "Python 2.7 MSI 安装失败，退出码 $($install.ExitCode)"
+          }
+          $python27 = Join-Path $runtimeRoot "python.exe"
+          if (-not (Test-Path -LiteralPath $python27)) {
+              throw "Python 2.7 解释器不存在: $python27"
+          }
+          curl.exe --fail --location --retry 3 --output $getPip $env:PYTHON27_GET_PIP_URL
+          & $python27 $getPip "pip==20.3.4" "setuptools<45" "wheel"
+          if ($LASTEXITCODE -ne 0) {
+              throw "Python 2.7 pip 引导失败"
+          }
+          & $python27 -m pip install --disable-pip-version-check -r requirements-python27.txt
+          if ($LASTEXITCODE -ne 0) {
+              throw "Python 2.7 审核依赖安装失败"
+          }
+          "PYTHON27_ROOT=$runtimeRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build Nuitka standalone
+        shell: pwsh
+        run: |
+          $outputDir = Join-Path $env:RUNNER_TEMP "mcneteasetoolpe-nuitka"
+          .\build_nuitka.ps1 -PythonPath (Get-Command python).Source `
+              -Python27Root $env:PYTHON27_ROOT -OutputDir $outputDir
+          $distDir = Join-Path $outputDir "main.dist"
+          "DIST_DIR=$distDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Verify packaged audit with Python 2.7
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP "audit-fixture"
+          New-Item -ItemType Directory -Force -Path $fixture | Out-Null
+          @'
+          {
+            "format_version": 2,
+            "header": {
+              "name": "CI fixture",
+              "description": "CI fixture",
+              "uuid": "11111111-1111-4111-8111-111111111111",
+              "version": [1, 0, 0],
+              "min_engine_version": [1, 18, 0]
+            },
+            "modules": [
+              {
+                "type": "data",
+                "uuid": "22222222-2222-4222-8222-222222222222",
+                "version": [1, 0, 0]
+              }
+            ]
+          }
+          '@ | Set-Content -LiteralPath (Join-Path $fixture "manifest.json") -Encoding utf8
+          @'
+          def duplicated():
+              pass
+
+          def duplicated():
+              pass
+          '@ | Set-Content -LiteralPath (Join-Path $fixture "duplicate.py") -Encoding ascii
+          $executable = Join-Path $env:DIST_DIR "MCNeteaseToolPE.exe"
+          $json = (& $executable --audit-json $fixture | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) {
+              throw "打包产物审核入口失败，退出码 $LASTEXITCODE"
+          }
+          $issues = $json | ConvertFrom-Json
+          $python27Finding = $issues | Where-Object {
+              $_.code -eq 18 -and $_.severity -eq "error" -and $_.detail -match "E0102"
+          }
+          if (-not $python27Finding) {
+              throw "打包产物未运行 Python 2.7 Pylint，输出: $json"
+          }
+
+      - name: Build installer and portable archive
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress --yes
+          if ($LASTEXITCODE -ne 0) {
+              throw "Inno Setup 安装失败"
+          }
+          $artifactDir = Join-Path $env:GITHUB_WORKSPACE "build\release-artifacts"
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+          $iscc = (Get-Command iscc.exe -ErrorAction Stop).Source
+          $languageDir = Join-Path $env:RUNNER_TEMP "inno-languages"
+          $languageFile = Join-Path $languageDir "ChineseSimplified.isl"
+          New-Item -ItemType Directory -Force -Path $languageDir | Out-Null
+          curl.exe --fail --location --retry 3 --output $languageFile $env:INNO_CHINESE_LANGUAGE_URL
+          if ($LASTEXITCODE -ne 0) {
+              throw "Inno Setup 简体中文语言文件下载失败"
+          }
+          $languageHash = (Get-FileHash -LiteralPath $languageFile -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($languageHash -ne $env:INNO_CHINESE_LANGUAGE_SHA256) {
+              throw "Inno Setup 简体中文语言文件校验失败: $languageHash"
+          }
+          & $iscc "/DMyAppVersion=$env:RELEASE_VERSION" "/DBuildDir=$env:DIST_DIR" `
+              "/DChineseMessagesFile=$languageFile" `
+              "/O$artifactDir" "installer\MCNeteaseToolPE.iss"
+          if ($LASTEXITCODE -ne 0) {
+              throw "Inno Setup 构建失败，退出码 $LASTEXITCODE"
+          }
+          $portable = Join-Path $artifactDir "MCNeteaseToolPE-$env:RELEASE_VERSION-windows-x64.zip"
+          Compress-Archive -Path (Join-Path $env:DIST_DIR "*") -DestinationPath $portable -CompressionLevel Optimal
+          $releaseFiles = @(Get-ChildItem -LiteralPath $artifactDir -File |
+              Where-Object { $_.Extension -in @(".exe", ".zip") })
+          if ($releaseFiles.Count -ne 2) {
+              throw "发布产物数量异常: $($releaseFiles.Count)"
+          }
+          $checksums = foreach ($file in $releaseFiles) {
+              $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              "$hash *$($file.Name)"
+          }
+          $checksums | Set-Content -LiteralPath (Join-Path $artifactDir "SHA256SUMS.txt") -Encoding ascii
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: MCNeteaseToolPE-${{ github.ref_name }}
+          path: build/release-artifacts/*
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $artifactDir = Join-Path $env:GITHUB_WORKSPACE "build\release-artifacts"
+          $assets = Get-ChildItem -LiteralPath $artifactDir -File |
+              ForEach-Object { $_.FullName }
+          gh release create $env:RELEASE_TAG $assets --verify-tag `
+              --title $env:RELEASE_TAG --generate-notes

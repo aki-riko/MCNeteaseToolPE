@@ -1,0 +1,15 @@
+# Python 2.7 compatibility-audit runtime only.
+# Install with Python 2.7.18; do not add this file to the Python 3 venv.
+pylint==1.9.5
+astroid==1.6.6
+mccabe==0.6.1
+colorama==0.4.6
+isort==4.3.21
+singledispatch==3.7.0
+backports.functools-lru-cache==1.6.6
+configparser==4.0.2
+enum34==1.1.10
+futures==3.4.0
+lazy-object-proxy==1.6.0
+six==1.17.0
+wrapt==1.15.0
