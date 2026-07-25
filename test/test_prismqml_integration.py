@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_PRISMQML_VERSION = "0.3.2.1"
+EXPECTED_PRISMQML_VERSION = "0.3.2.7"
 
 
 def _read(relative_path: str) -> str:
@@ -73,6 +73,15 @@ def test_nuitka_script_uses_installed_prismqml_release() -> None:
     assert "importlib.metadata" in source
     assert "m.version('prismqml')" in source
     assert "pathlib.Path(prismqml.__file__).resolve().parent" in source
+
+
+def test_nuitka_script_builds_a_gui_executable_without_a_new_console() -> None:
+    source = _read("build_nuitka.ps1")
+
+    assert '"--windows-console-mode=attach"' in source
+    assert '"--windows-console-mode=hide"' not in source
+    assert "Get-WindowsPeSubsystem" in source
+    assert "$windowsGuiSubsystem = 2" in source
 
 
 def test_python_updater_context_contract() -> None:

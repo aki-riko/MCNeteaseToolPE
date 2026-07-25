@@ -24,6 +24,37 @@ function Resolve-RequiredPath {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
+function Get-WindowsPeSubsystem {
+    param([string]$ExecutablePath)
+
+    $stream = [System.IO.File]::Open(
+        $ExecutablePath, [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read
+    )
+    try {
+        $reader = [System.IO.BinaryReader]::new($stream)
+        $stream.Position = 0x3c
+        $peOffset = $reader.ReadInt32()
+        if ($peOffset -lt 0 -or ($peOffset + 94) -gt $stream.Length) {
+            throw "PE 头偏移无效: $ExecutablePath"
+        }
+        $stream.Position = $peOffset
+        if ($reader.ReadUInt32() -ne 0x00004550) {
+            throw "PE 签名无效: $ExecutablePath"
+        }
+        $stream.Position = $peOffset + 24
+        $magic = $reader.ReadUInt16()
+        if ($magic -notin @(0x010b, 0x020b)) {
+            throw "PE Optional Header 类型无效: $magic"
+        }
+        $stream.Position = $peOffset + 24 + 68
+        return $reader.ReadUInt16()
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 $projectRoot = $PSScriptRoot
 $python = Resolve-RequiredPath -Path $PythonPath -Label "Python 解释器"
 $requirementsFile = Resolve-RequiredPath -Path (Join-Path $projectRoot "requirements.txt") -Label "运行依赖文件"
@@ -109,7 +140,7 @@ $arguments = @(
     "--mode=standalone",
     "--output-dir=$OutputDir",
     "--output-filename=MCNeteaseToolPE.exe",
-    "--windows-console-mode=hide",
+    "--windows-console-mode=attach",
     "--assume-yes-for-downloads",
     "--enable-plugin=pyside6",
     "--include-qt-plugins=qml",
@@ -164,6 +195,12 @@ foreach ($metadataPattern in @("pylint-*.dist-info", "astroid-*.dist-info")) {
 }
 
 $executable = Resolve-RequiredPath -Path (Join-Path $distDir "MCNeteaseToolPE.exe") -Label "应用可执行文件"
+$windowsGuiSubsystem = 2
+$actualSubsystem = Get-WindowsPeSubsystem -ExecutablePath $executable
+if ($actualSubsystem -ne $windowsGuiSubsystem) {
+    throw "应用 PE 子系统不是 Windows GUI: 期望 $windowsGuiSubsystem，实际 $actualSubsystem"
+}
+Write-Output "Windows PE 子系统验证通过: GUI ($actualSubsystem)"
 $appIconIco = Resolve-RequiredPath -Path (Join-Path $iconOutputDir "app_icon.ico") -Label "生成的应用 ICO 图标"
 Copy-Item -LiteralPath $appIconIco -Destination (Join-Path $distDir "app.ico") -Force
 Write-Output "Nuitka standalone 构建完成: $executable"

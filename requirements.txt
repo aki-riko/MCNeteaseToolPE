@@ -1,4 +1,4 @@
 # Runtime dependencies for the Python rewrite.
 PySide6==6.11.1
-prismqml==0.3.2.1
+prismqml==0.3.2.7
 mcp==1.28.1

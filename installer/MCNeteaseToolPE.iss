@@ -12,12 +12,12 @@
 ;   3. AppId 固定(勿随版本变化),使新版覆盖安装到同一位置。
 ;
 ; 用法:
-;   iscc /DMyAppVersion=0.1.0.0 /DBuildDir="..\build\nuitka-release\main.dist" installer\MCNeteaseToolPE.iss
+;   iscc /DMyAppVersion=0.1.0.1 /DBuildDir="..\build\nuitka-release\main.dist" installer\MCNeteaseToolPE.iss
 ;   (未传 MyAppVersion / BuildDir 时用下方默认值)
 ; ============================================================================
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0.0"
+  #define MyAppVersion "0.1.0.1"
 #endif
 #ifndef BuildDir
   #define BuildDir "..\build\nuitka\main.dist"

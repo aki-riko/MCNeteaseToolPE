@@ -85,7 +85,7 @@ Minecraft 数据目录。
 
 ## 🛠️ Python 开发运行
 
-Python 重写运行时使用 PyPI 发布的固定版本 `prismqml==0.3.2.1`，不再通过
+Python 重写运行时使用 PyPI 发布的固定版本 `prismqml==0.3.2.7`，不再通过
 `PYTHONPATH` 覆盖成本地引擎源码；MCP 使用固定版本 `mcp==1.28.1`。Windows
 PowerShell 示例：
 
@@ -170,6 +170,10 @@ Inno Setup 安装包生成及 GitHub Release 发布；本地不需要执行发�
 `src/config.py` 中的 `APP_VERSION` 完全一致。Release 同时提供安装包、便携 ZIP 与
 `SHA256SUMS.txt`。
 
+发布版使用 Nuitka 的 Windows GUI 子系统：从桌面、开始菜单或安装程序启动时不会创建控制台窗口；
+从已有终端显式调用 `--audit-json` 时会复用该终端输出验收 JSON。构建脚本会读取最终 EXE 的 PE 头，
+若子系统不是 `WINDOWS_GUI (2)` 将直接阻止发布。
+
 standalone 可执行文件支持只读自动验收，不会修改被扫描工程：
 
 ```powershell
@@ -186,7 +190,7 @@ standalone 可执行文件支持只读自动验收，不会修改被扫描工程
 `build_nuitka.ps1` 生成 standalone 目录，再把该 `main.dist` 目录交给 Inno Setup：
 
 ```bash
-iscc /DMyAppVersion=0.1.0.0 /DBuildDir="build\nuitka-release\main.dist" installer/MCNeteaseToolPE.iss
+iscc /DMyAppVersion=0.1.0.1 /DBuildDir="build\nuitka-release\main.dist" installer/MCNeteaseToolPE.iss
 ```
 
 输出文件名包含 `Setup` 关键词,供自动更新按 GitHub release 资源匹配。安装包支持
