@@ -240,8 +240,9 @@ def check_editor_metadata(root: Path) -> list[ContentFinding]:
     """Code 18: reject the documented 'export with editing information' markers."""
 
     findings: list[ContentFinding] = []
-    for path in root.rglob("*"):
-        if path.name.casefold() not in {".mcs", "work.mcscfg"}:
+    for name in (".mcs", "studio.json", "work.mcscfg"):
+        path = root / name
+        if not path.exists():
             continue
         findings.append(
             _finding(

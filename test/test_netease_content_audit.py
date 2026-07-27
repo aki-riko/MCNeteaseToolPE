@@ -66,6 +66,7 @@ def test_codes_6_and_10_cover_layout_and_resource_entities(tmp_path: Path) -> No
 
 def test_codes_18_35_and_40_cover_metadata_identifiers_and_numeric_keys(tmp_path: Path) -> None:
     (tmp_path / ".mcs").mkdir()
+    (tmp_path / "studio.json").write_text("{}", encoding="utf-8")
     (tmp_path / "repeat.py").write_text("aaaaaa_value = 1\n", encoding="utf-8")
     (tmp_path / "keys.json").write_text('{"icon:2147483648": true}', encoding="utf-8")
 

@@ -352,9 +352,13 @@ def _append_python2_pylint_issues(
 
 def _check_root_junk(root: str, output: list[AuditIssue]) -> None:
     seen: set[str] = set()
-    scan_roots = [root] if os.path.isfile(os.path.join(root, "level.dat")) else _collect_pack_dirs(root)
+    is_map = os.path.isfile(os.path.join(root, "level.dat"))
+    scan_roots = [root] if is_map else _collect_pack_dirs(root)
+    map_database = _absolute(os.path.join(root, "db")) if is_map else ""
     for pack in scan_roots:
         for current, dirs, files in _walk(pack):
+            if map_database and os.path.commonpath([map_database, _absolute(current)]) == map_database:
+                continue
             for name in [*dirs, *files]:
                 path = _absolute(os.path.join(current, name))
                 if path in seen or os.path.islink(path):

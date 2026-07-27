@@ -20,6 +20,11 @@ LOGGER = logging.getLogger(__name__)
 JUNK_DIR_NAMES = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 JUNK_FILE_NAMES = {".ds_store", "thumbs.db", "desktop.ini"}
 JUNK_FILE_SUFFIXES = (".pyc", ".pyo", ".mcp", ".log", ".tmp", ".bak", ".swp")
+STUDIO_METADATA_NAMES = (".mcs", "studio.json", "work.mcscfg")
+STUDIO_LINKED_PACK_PREFIXES = {
+    "behavior_packs": "behavior_dn_",
+    "resource_packs": "resource_dn_",
+}
 
 
 @dataclass(frozen=True)
@@ -79,9 +84,47 @@ def _scan_junk_files(root: str, current: str, files: list[str]) -> _ScanResult:
     return _ScanResult(items, total)
 
 
-def _scan_junk(root: str) -> _ScanResult:
-    items: list[str] = []
+def _scan_studio_export_residue(root: str) -> _ScanResult:
+    metadata = [
+        _absolute(os.path.join(root, name))
+        for name in STUDIO_METADATA_NAMES
+        if os.path.lexists(os.path.join(root, name))
+        and not os.path.islink(os.path.join(root, name))
+    ]
+    if not metadata:
+        return _ScanResult([], 0)
+
+    items = list(metadata)
+    if is_map_project(root):
+        for collection_name, prefix in STUDIO_LINKED_PACK_PREFIXES.items():
+            collection = os.path.join(root, collection_name)
+            if not os.path.isdir(collection) or os.path.islink(collection):
+                continue
+            for name in os.listdir(collection):
+                candidate = os.path.join(collection, name)
+                if (
+                    not name.casefold().startswith(prefix)
+                    or not os.path.isdir(candidate)
+                    or os.path.islink(candidate)
+                    or os.path.isfile(os.path.join(candidate, "manifest.json"))
+                ):
+                    continue
+                items.append(_absolute(candidate))
+
     total = 0
+    for path in items:
+        try:
+            total += _dir_size(path) if os.path.isdir(path) else os.path.getsize(path)
+        except OSError as error:
+            LOGGER.warning("无法统计 Studio 导出残留 %s: %s", path, error)
+    return _ScanResult(items, total)
+
+
+def _scan_junk(root: str) -> _ScanResult:
+    studio_residue = _scan_studio_export_residue(root)
+    residue_directories = [path for path in studio_residue.items if os.path.isdir(path)]
+    items: list[str] = list(studio_residue.items)
+    total = studio_residue.total_bytes
     map_database = _absolute(os.path.join(root, "db")) if is_map_project(root) else ""
     for current, directories, files in os.walk(root, topdown=True, followlinks=False):
         if map_database and _is_inside(map_database, _absolute(current)):
@@ -90,8 +133,11 @@ def _scan_junk(root: str) -> _ScanResult:
             _scan_junk_directories(root, current, directories),
             _scan_junk_files(root, current, files),
         ):
-            items.extend(result.items)
-            total += result.total_bytes
+            for path in result.items:
+                if any(_is_inside(residue, path) for residue in residue_directories):
+                    continue
+                items.append(path)
+                total += _dir_size(path) if os.path.isdir(path) else os.path.getsize(path)
     return _ScanResult(items, total)
 
 

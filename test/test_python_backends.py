@@ -383,13 +383,48 @@ def test_cleanup_preserves_map_leveldb_log(tmp_path: Path) -> None:
     build_log.write_bytes(b"ordinary-log")
 
     result, _logs = _scan(str(tmp_path))
+    audit_issues = scan(str(tmp_path))
     success, removed, _freed, _message, _logs = _clean(str(tmp_path))
 
     assert result.items == [str(build_log.resolve())]
+    assert not any(issue.file_path == str(leveldb_log.resolve()) for issue in audit_issues)
     assert success is True
     assert removed == 1
     assert leveldb_log.read_bytes() == b"leveldb-wal"
     assert not build_log.exists()
+
+
+def test_cleanup_removes_studio_linked_export_residue(tmp_path: Path) -> None:
+    (tmp_path / "level.dat").write_bytes(b"bedrock-level")
+    metadata = [tmp_path / ".mcs", tmp_path / "studio.json", tmp_path / "work.mcscfg"]
+    metadata[0].mkdir()
+    (metadata[0] / "settings.json").write_text("{}", encoding="utf-8")
+    for path in metadata[1:]:
+        path.write_text("{}", encoding="utf-8")
+
+    linked_pack = tmp_path / "behavior_packs" / "behavior_dn_demo"
+    linked_pack.mkdir(parents=True)
+    (linked_pack / "linked.py").write_text("import sys\n", encoding="utf-8")
+    ordinary_missing_manifest = tmp_path / "behavior_packs" / "custom_pack"
+    ordinary_missing_manifest.mkdir()
+    (ordinary_missing_manifest / "keep.py").write_text("value = 1\n", encoding="utf-8")
+    database = tmp_path / "db"
+    database.mkdir()
+    leveldb_log = database / "000001.log"
+    leveldb_log.write_bytes(b"leveldb-wal")
+
+    result, _logs = _scan(str(tmp_path))
+    success, removed, _freed, _message, _logs = _clean(str(tmp_path))
+
+    assert set(result.items) == {
+        str(path.resolve()) for path in [*metadata, linked_pack]
+    }
+    assert success is True
+    assert removed == 4
+    assert all(not path.exists() for path in metadata)
+    assert not linked_pack.exists()
+    assert ordinary_missing_manifest.is_dir()
+    assert leveldb_log.read_bytes() == b"leveldb-wal"
 
 
 def test_cleanup_skips_junk_file_symlink(tmp_path: Path) -> None:
