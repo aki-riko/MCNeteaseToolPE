@@ -207,7 +207,7 @@ standalone 可执行文件支持只读自动验收，不会修改被扫描工程
 `build_nuitka.ps1` 生成 standalone 目录，再把该 `main.dist` 目录交给 Inno Setup：
 
 ```bash
-iscc /DMyAppVersion=0.1.0.1 /DBuildDir="build\nuitka-release\main.dist" installer/MCNeteaseToolPE.iss
+iscc /DMyAppVersion=0.1.0.2 /DBuildDir="build\nuitka-release\main.dist" installer/MCNeteaseToolPE.iss
 ```
 
 输出文件名包含 `Setup` 关键词,供自动更新按 GitHub release 资源匹配。安装包支持
