@@ -11,6 +11,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_PRISMQML_VERSION = "0.3.2.11"
+EXPECTED_MCP_TOOL_NAMES = {
+    "process_project",
+    "inspect_world_data",
+    "update_level_dat",
+    "update_world_database",
+    "scan_global_minecraft_data",
+    "clean_global_minecraft_data",
+}
 
 
 def _read(relative_path: str) -> str:
@@ -154,21 +162,22 @@ def _assert_mcp_page_contract(page_source: str) -> None:
 
 
 def _assert_mcp_page_tool_list(page_source: str) -> None:
-    for tool_name in (
-        "process_project",
-        "inspect_world_data",
-        "update_level_dat",
-        "update_world_database",
-        "scan_global_minecraft_data",
-        "clean_global_minecraft_data",
-    ):
-        assert f'"name": "{tool_name}"' in page_source
+    tool_names = set(re.findall(r'\{ "name": "([^"]+)"', page_source))
+    assert tool_names == EXPECTED_MCP_TOOL_NAMES
+
+
+def _assert_mcp_readme_tool_list(readme: str) -> None:
+    mcp_section = readme.split("## 🔌 MCP 服务器", 1)[1].split("## 🛠️", 1)[0]
+    tool_names = set(re.findall(r"(?m)^- `([^`]+)`：", mcp_section))
+    assert tool_names == EXPECTED_MCP_TOOL_NAMES
+    assert "工程识别、只读审核、清理预览" not in readme
 
 
 def test_documentation_page_is_replaced_by_python_mcp_server() -> None:
     python_source = _read("main.py")
     page_source = _read("qml/McpServerPage.qml")
     backend_source = _read("src/mcp_server_backend.py")
+    readme = _read("README.md")
 
     assert not (ROOT / "qml" / "DocsPage.qml").exists()
     assert "DocsPage.qml" not in python_source
@@ -176,5 +185,6 @@ def test_documentation_page_is_replaced_by_python_mcp_server() -> None:
     assert '"MCP"' in python_source
     _assert_mcp_page_contract(page_source)
     _assert_mcp_page_tool_list(page_source)
+    _assert_mcp_readme_tool_list(readme)
     assert "McpServerBackend()" in python_source
     assert "QTimer.singleShot(0, self.start)" in backend_source
