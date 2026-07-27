@@ -209,7 +209,7 @@ def _manifest_binding(root: Path, manifest: Path) -> tuple[str, tuple[str, tuple
 
 
 def check_map_upload_structure(root: Path) -> list[ContentFinding]:
-    """Code 6 and upload rules for required map files and Add-on bindings."""
+    """Warn about conditional lobby-map files without blocking ordinary maps."""
 
     if not (root / "level.dat").is_file():
         return []
@@ -217,7 +217,16 @@ def check_map_upload_structure(root: Path) -> list[ContentFinding]:
     for name in ("level.dat_old", "levelname.txt"):
         path = root / name
         if not path.is_file():
-            findings.append(_finding(root, path, 6, "error", f"地图缺少 {name}", name))
+            findings.append(
+                _finding(
+                    root,
+                    path,
+                    6,
+                    "warning",
+                    f"联机大厅投稿建议补充 {name}",
+                    "普通地图不强制；联机大厅目录示例和 Code 6 已知原因包含此文件",
+                )
+            )
 
     expected: dict[str, set[tuple[str, tuple[int, ...]]]] = {
         "behavior": set(),
@@ -243,9 +252,9 @@ def check_map_upload_structure(root: Path) -> list[ContentFinding]:
                     root,
                     path,
                     6,
-                    "error",
-                    f"地图携带组件包但缺少 {path.name}",
-                    path.name,
+                    "warning",
+                    f"联机地图携带组件包但缺少 {path.name}",
+                    "普通地图不强制；投稿联机地图时需要此绑定文件",
                 )
             )
             continue
@@ -259,9 +268,9 @@ def check_map_upload_structure(root: Path) -> list[ContentFinding]:
                     root,
                     path,
                     6,
-                    "error",
-                    f"{path.name} 顶层必须是 JSON 数组",
-                    path.name,
+                    "warning",
+                    f"联机地图绑定文件 {path.name} 顶层不是 JSON 数组",
+                    "普通地图不阻断；投稿联机地图前需要修正",
                 )
             )
             continue
@@ -284,9 +293,9 @@ def check_map_upload_structure(root: Path) -> list[ContentFinding]:
                     root,
                     path,
                     6,
-                    "error",
-                    f"{path.name} 与 manifest 的 UUID/version/type 不一致",
-                    "每项必须使用对应 header.uuid、header.version，并包含 type=Addon",
+                    "warning",
+                    f"联机地图绑定文件 {path.name} 与 manifest 不一致",
+                    "投稿联机地图时每项必须使用对应 header.uuid、header.version，并包含 type=Addon",
                 )
             )
     return findings

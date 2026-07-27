@@ -79,7 +79,7 @@ def test_code_10_rejects_manifest_at_addon_archive_root(tmp_path: Path) -> None:
     assert any(item.code == 10 and "ZIP 根目录下一层" in item.title for item in findings)
 
 
-def test_code_6_requires_map_companion_files_and_matching_world_bindings(
+def test_code_6_warns_about_conditional_lobby_files_and_world_bindings(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "level.dat").write_bytes(_level_dat(818))
@@ -103,12 +103,14 @@ def test_code_6_requires_map_companion_files_and_matching_world_bindings(
     )
 
     findings = run_content_checks(str(tmp_path))
-    titles = {item.title for item in findings if item.code == 6}
+    lobby_findings = [item for item in findings if item.code == 6]
+    titles = {item.title for item in lobby_findings}
 
-    assert "地图缺少 level.dat_old" in titles
-    assert "地图缺少 levelname.txt" in titles
+    assert "联机大厅投稿建议补充 level.dat_old" in titles
+    assert "联机大厅投稿建议补充 levelname.txt" in titles
     assert any("world_behavior_packs.json 与 manifest" in title for title in titles)
-    assert "地图携带组件包但缺少 world_resource_packs.json" in titles
+    assert "联机地图携带组件包但缺少 world_resource_packs.json" in titles
+    assert {item.severity for item in lobby_findings} == {"warning"}
 
 
 def test_map_upload_structure_accepts_complete_matching_bindings(tmp_path: Path) -> None:
@@ -141,7 +143,10 @@ def test_map_upload_structure_rejects_non_array_binding(tmp_path: Path) -> None:
 
     findings = run_content_checks(str(tmp_path))
 
-    assert any(item.code == 6 and "JSON 数组" in item.title for item in findings)
+    assert any(
+        item.code == 6 and item.severity == "warning" and "JSON 数组" in item.title
+        for item in findings
+    )
 
 
 def test_codes_18_35_and_40_cover_metadata_identifiers_and_numeric_keys(tmp_path: Path) -> None:
