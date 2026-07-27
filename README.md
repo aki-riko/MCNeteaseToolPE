@@ -23,7 +23,8 @@ MCNeteaseToolPE 面向网易 MC 中国版的地图与组件开发者,在提交�
   与总进度，长时间代码审核不再像卡死；审核结束后会用 PrismQML 桌面 Toast 在
   右下角提示通过或拒审及错误、警告数量。
 - **📦 自动 ZIP**：审核通过并完成 UUID 重写后，在工程根目录自动生成与工程同名的
-  `.zip`。压缩包只包含带 `manifest.json` 的组件包，不会混入 `.git`、测试、工具或旧 ZIP。
+  `.zip`。地图 ZIP 保留唯一的顶级地图文件夹；Add-on ZIP 只包含带
+  `manifest.json` 的组件包，不会混入 `.git`、测试、工具或旧 ZIP。
 - **🔌 本机 MCP 服务器**：通过官方 Model Context Protocol Python SDK 提供
   Streamable HTTP 服务。服务器随程序自动启动，每次工具调用都从 AI 提示词接收目标
   工程路径，可调用工程识别、只读审核、清理预览、垃圾清理、UUID 重写和 ZIP 输出。

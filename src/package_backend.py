@@ -68,7 +68,11 @@ def _pack_entries(
 
     if is_map_project(root):
         entries, file_count = _walk_entries(root, root, excluded_files)
-        return entries, file_count, []
+        top_level = f"{root.name}/"
+        wrapped_entries = [(root, top_level)] + [
+            (path, top_level + member_name) for path, member_name in entries
+        ]
+        return wrapped_entries, file_count, []
 
     entries: list[tuple[Path, str]] = []
     file_count = 0

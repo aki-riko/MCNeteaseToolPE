@@ -63,12 +63,14 @@ def test_create_zip_archive_preserves_complete_map_and_excludes_output(tmp_path:
 
     assert result.file_count == 3
     with zipfile.ZipFile(result.archive_path) as bundle:
+        assert bundle.namelist()[0] == "world/"
+        assert {name.split("/", 1)[0] for name in bundle.namelist()} == {"world"}
         assert sorted(name for name in bundle.namelist() if not name.endswith("/")) == [
-            "db/000001.log",
-            "level.dat",
-            "levelname.txt",
+            "world/db/000001.log",
+            "world/level.dat",
+            "world/levelname.txt",
         ]
-        assert "world.zip" not in bundle.namelist()
+        assert "world/world.zip" not in bundle.namelist()
 
 
 def _wait_for_task(backend: PackageBackend, timeout_ms: int = 10_000) -> bool:
