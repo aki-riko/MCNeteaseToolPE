@@ -424,11 +424,24 @@ def _check_resource_packs(root: str, output: list[AuditIssue]) -> None:
         pack = os.path.dirname(path)
         if _manifest_type(path) != "resources":
             continue
+        # 网易中国版资源包模板明确要求 textures 目录存在；shader 只是
+        # 可选内容，不能用来替代 textures。
         has_textures = os.path.isdir(os.path.join(pack, "textures"))
-        has_shader = os.path.isdir(os.path.join(pack, "shaders")) or os.path.isdir(os.path.join(pack, "shader"))
-        if not has_textures and not has_shader:
+        if not has_textures:
             rel = _relative(root, pack) or "."
-            output.append(_issue(24, "error", "资源包缺少 textures 或 shader 文件夹", rel, pack))
+            output.append(_issue(24, "error", "资源包缺少 textures 文件夹", rel, pack))
+
+
+def _check_behavior_packs(root: str, output: list[AuditIssue]) -> None:
+    """Check the one mandatory behavior-pack content directory."""
+
+    for path in _iter_named(root, filename="manifest.json"):
+        if _manifest_type(path) not in {"data", "client_data", "javascript"}:
+            continue
+        pack = os.path.dirname(path)
+        if not os.path.isdir(os.path.join(pack, "entities")):
+            rel = _relative(root, pack) or "."
+            output.append(_issue(24, "error", "行为包缺少 entities 文件夹", rel, pack))
 
 
 def _check_bad_resource_dir(root: str, output: list[AuditIssue]) -> None:
@@ -502,6 +515,7 @@ def scan(
         ("检查缓存与无关文件", _check_root_junk),
         ("检查文件与目录命名", _check_file_names),
         ("检查 manifest 配置", _check_manifests),
+        ("检查行为包结构", _check_behavior_packs),
         ("检查资源包结构", _check_resource_packs),
         ("检查资源目录冲突", _check_bad_resource_dir),
     )

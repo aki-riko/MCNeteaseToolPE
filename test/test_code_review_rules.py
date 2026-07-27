@@ -50,6 +50,32 @@ def _code18_errors(project: Path) -> list:
     return [issue for issue in scan(str(project)) if issue.code == 18 and issue.severity == "error"]
 
 
+def test_netease_required_pack_directories(tmp_path: Path) -> None:
+    behavior = tmp_path / "behavior_pack"
+    resource = tmp_path / "resource_pack"
+    behavior.mkdir()
+    resource.mkdir()
+    base = {"header": {"min_engine_version": [1, 20, 0]}}
+    (behavior / "manifest.json").write_text(
+        json.dumps({**base, "modules": [{"type": "data"}]}), encoding="utf-8"
+    )
+    (resource / "manifest.json").write_text(
+        json.dumps({**base, "modules": [{"type": "resources"}]}), encoding="utf-8"
+    )
+    (resource / "shaders").mkdir()
+
+    issues = scan(str(tmp_path))
+
+    assert any(issue.code == 24 and "entities" in issue.title for issue in issues)
+    assert any(issue.code == 24 and "textures" in issue.title for issue in issues)
+
+    (behavior / "entities").mkdir()
+    (resource / "textures").mkdir()
+    issues = scan(str(tmp_path))
+    assert not any(issue.code == 24 and "entities" in issue.title for issue in issues)
+    assert not any(issue.code == 24 and "textures" in issue.title for issue in issues)
+
+
 def test_bundled_whitelist_matches_current_document_landmarks() -> None:
     whitelist = load_module_whitelist()
 
