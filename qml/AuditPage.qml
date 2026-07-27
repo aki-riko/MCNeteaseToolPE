@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // 打包审核页面
-// 绑定 per-page 后端 backend:扫描网易 MC 工程,覆盖全部打包机审错误码。
+// 绑定 per-page 后端 backend:扫描网易 MC 工程中可本地确定的公开机审规则。
 // 流程:选择目录 → audit(dir) → finished(passed,errorCount,warningCount,issues)。
 import QtQuick
 import QtQuick.Layouts
@@ -74,11 +74,11 @@ Item {
                     HintIcon {
                         anchors.verticalCenter: parent.verticalCenter
                         iconSize: 18
-                        toolTipText: qsTr("本地静态检查网易打包机审常见阻断项(错误码 1-40)。\n审核只读,不修改任何工程文件;结果按严重程度分级并附定位信息。")
+                        toolTipText: qsTr("检查网易已公开且能从工程内容确定的机审阻断项。\n审核前会自动补全行为包 entities 与资源包 textures；结果按严重程度分级并附定位信息。")
                     }
                 }
                 Label {
-                    text: qsTr("模拟网易打包机审,覆盖全部错误码,提前发现上架阻断问题。")
+                    text: qsTr("检查可在本地确定的网易公开规则，提前发现上架阻断问题。")
                     color: Enums.textColor.secondary
                     font.family: Enums.fontFamily
                     font.pixelSize: Enums.typography.caption

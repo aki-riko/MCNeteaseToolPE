@@ -103,20 +103,12 @@ def _manifest_version(document: dict[str, object], pack_name: str) -> list[int]:
     return list(version)
 
 
-def _binding_type(path: str) -> str | None:
+def _validate_binding_file(path: str) -> None:
     if not os.path.isfile(path):
-        return None
+        return
     document = _json_document(path)
     if not isinstance(document, list):
         raise ValueError(f"{os.path.basename(path)} 必须是 JSON 数组")
-    return next(
-        (
-            item["type"]
-            for item in document
-            if isinstance(item, dict) and isinstance(item.get("type"), str)
-        ),
-        None,
-    )
 
 
 def _world_binding_updates(
@@ -129,16 +121,15 @@ def _world_binding_updates(
         if not selected:
             continue
         path = os.path.join(root, filename)
-        binding_type = _binding_type(path)
+        _validate_binding_file(path)
         payload: list[dict[str, object]] = []
         for pack, document in selected:
             header = document["header"]
             item: dict[str, object] = {
                 "pack_id": header["uuid"],
                 "version": _manifest_version(document, pack.name),
+                "type": "Addon",
             }
-            if binding_type is not None:
-                item["type"] = binding_type
             payload.append(item)
         updates.append((path, payload))
     return updates

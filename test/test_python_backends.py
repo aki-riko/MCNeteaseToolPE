@@ -177,6 +177,25 @@ def test_uuid_generation_rebuilds_map_world_bindings(tmp_path: Path) -> None:
     ]
 
 
+def test_uuid_generation_adds_required_addon_type_to_new_map_binding(tmp_path: Path) -> None:
+    pack = tmp_path / "behavior_packs" / "behavior_pack"
+    pack.mkdir(parents=True)
+    (pack / "manifest.json").write_text(
+        json.dumps(_manifest("behavior", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")),
+        encoding="utf-8",
+    )
+    (tmp_path / "level.dat").write_bytes(b"bedrock-level")
+
+    success, changed, _message, _logs = _generate(str(tmp_path))
+
+    binding = json.loads(
+        (tmp_path / "world_behavior_packs.json").read_text(encoding="utf-8")
+    )
+    assert success is True
+    assert changed == 1
+    assert binding[0]["type"] == "Addon"
+
+
 def test_uuid_generation_rejects_invalid_map_version_before_writing(tmp_path: Path) -> None:
     pack = tmp_path / "behavior_pack"
     pack.mkdir()

@@ -15,9 +15,16 @@ from src.netease_content_audit import run_content_checks
 from src.pack_scanner import scan
 
 
-def _manifest(module_type: str) -> dict[str, object]:
+def _manifest(
+    module_type: str,
+    pack_uuid: str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+) -> dict[str, object]:
     return {
-        "header": {"min_engine_version": [1, 20, 0]},
+        "header": {
+            "uuid": pack_uuid,
+            "version": [1, 0, 0],
+            "min_engine_version": [1, 20, 0],
+        },
         "modules": [{"type": module_type}],
     }
 
@@ -62,6 +69,79 @@ def test_codes_6_and_10_cover_layout_and_resource_entities(tmp_path: Path) -> No
 
     assert any(item.code == 6 and "层级" in item.title for item in findings)
     assert sum(item.code == 10 for item in findings) == 2
+
+
+def test_code_10_rejects_manifest_at_addon_archive_root(tmp_path: Path) -> None:
+    _write_manifest(tmp_path, "data")
+
+    findings = run_content_checks(str(tmp_path))
+
+    assert any(item.code == 10 and "ZIP 根目录下一层" in item.title for item in findings)
+
+
+def test_code_6_requires_map_companion_files_and_matching_world_bindings(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "level.dat").write_bytes(_level_dat(818))
+    behavior_uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    resource_uuid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    behavior = tmp_path / "behavior_packs" / "behavior_demo"
+    resource = tmp_path / "resource_packs" / "resource_demo"
+    behavior.mkdir(parents=True)
+    resource.mkdir(parents=True)
+    (behavior / "manifest.json").write_text(
+        json.dumps(_manifest("data", behavior_uuid)), encoding="utf-8"
+    )
+    (resource / "manifest.json").write_text(
+        json.dumps(_manifest("resources", resource_uuid)), encoding="utf-8"
+    )
+    (tmp_path / "world_behavior_packs.json").write_text(
+        json.dumps(
+            [{"pack_id": behavior_uuid, "version": [1, 0, 0], "type": "Wrong"}]
+        ),
+        encoding="utf-8",
+    )
+
+    findings = run_content_checks(str(tmp_path))
+    titles = {item.title for item in findings if item.code == 6}
+
+    assert "地图缺少 level.dat_old" in titles
+    assert "地图缺少 levelname.txt" in titles
+    assert any("world_behavior_packs.json 与 manifest" in title for title in titles)
+    assert "地图携带组件包但缺少 world_resource_packs.json" in titles
+
+
+def test_map_upload_structure_accepts_complete_matching_bindings(tmp_path: Path) -> None:
+    (tmp_path / "level.dat").write_bytes(_level_dat(818))
+    (tmp_path / "level.dat_old").write_bytes(_level_dat(818))
+    (tmp_path / "levelname.txt").write_text("demo", encoding="utf-8")
+    pack_uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    behavior = tmp_path / "behavior_packs" / "behavior_demo"
+    behavior.mkdir(parents=True)
+    (behavior / "manifest.json").write_text(
+        json.dumps(_manifest("data", pack_uuid)), encoding="utf-8"
+    )
+    (tmp_path / "world_behavior_packs.json").write_text(
+        json.dumps(
+            [{"pack_id": pack_uuid, "version": [1, 0, 0], "type": "Addon"}]
+        ),
+        encoding="utf-8",
+    )
+
+    assert not [item for item in run_content_checks(str(tmp_path)) if item.code == 6]
+
+
+def test_map_upload_structure_rejects_non_array_binding(tmp_path: Path) -> None:
+    (tmp_path / "level.dat").write_bytes(_level_dat(818))
+    (tmp_path / "level.dat_old").write_bytes(_level_dat(818))
+    (tmp_path / "levelname.txt").write_text("demo", encoding="utf-8")
+    behavior = tmp_path / "behavior_packs" / "behavior_demo"
+    _write_manifest(behavior, "data")
+    (tmp_path / "world_behavior_packs.json").write_text("{}", encoding="utf-8")
+
+    findings = run_content_checks(str(tmp_path))
+
+    assert any(item.code == 6 and "JSON 数组" in item.title for item in findings)
 
 
 def test_codes_18_35_and_40_cover_metadata_identifiers_and_numeric_keys(tmp_path: Path) -> None:
@@ -123,6 +203,16 @@ def test_codes_26_29_33_and_34_cover_media_and_player_rules(
 
     codes = _codes(tmp_path)
     assert {26, 29, 33, 34}.issubset(codes)
+
+
+def test_code_33_checks_audio_outside_sounds_directory(tmp_path: Path) -> None:
+    media = tmp_path / "media"
+    media.mkdir()
+    (media / "music.mp3").write_bytes(b"ID3")
+
+    findings = run_content_checks(str(tmp_path))
+
+    assert any(item.code == 33 and item.path == "media/music.mp3" for item in findings)
 
 
 def test_codes_24_25_and_35_are_rejecting_errors(tmp_path: Path) -> None:

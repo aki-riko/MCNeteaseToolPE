@@ -88,6 +88,11 @@ def _pack_entries(
             continue
         pack_dirs.append(candidate)
 
+    invalid = [path for path in pack_dirs if path.parent != root]
+    if invalid:
+        relative = ", ".join(path.relative_to(root).as_posix() for path in invalid)
+        raise ValueError(f"Addon 组件包必须直接位于工程根目录下一层:{relative}")
+
     for pack_dir in pack_dirs:
         pack_entries, pack_file_count = _walk_entries(root, pack_dir, excluded_files)
         entries.extend(pack_entries)
@@ -119,6 +124,7 @@ def _write_archive(
     archive: Path,
     entries: list[tuple[Path, str]],
     progress: ProgressCallback | None,
+    validator: Callable[[Path], None],
 ) -> int:
     temporary_path = _temporary_archive_path(archive)
     try:
@@ -132,11 +138,42 @@ def _write_archive(
                 bundle.write(path, member_name)
                 if progress is not None:
                     progress(index, len(entries))
+        validator(Path(temporary_path))
         os.replace(temporary_path, archive)
         temporary_path = ""
         return archive.stat().st_size
     finally:
         _remove_temporary_archive(temporary_path)
+
+
+def _validate_archive_structure(
+    archive: Path,
+    root: Path,
+    pack_dirs: list[Path],
+) -> None:
+    """Validate the temporary ZIP before replacing an older output."""
+
+    with zipfile.ZipFile(archive, mode="r") as bundle:
+        broken = bundle.testzip()
+        if broken is not None:
+            raise ValueError(f"ZIP CRC 校验失败:{broken}")
+        names = bundle.namelist()
+    if not names:
+        raise ValueError("ZIP 内没有可上传内容")
+    if is_map_project(root):
+        expected_top = root.name
+        top_levels = {name.rstrip("/").split("/", 1)[0] for name in names if name.rstrip("/")}
+        if top_levels != {expected_top}:
+            raise ValueError("地图 ZIP 必须有且仅有一个顶级地图文件夹")
+        if f"{expected_top}/level.dat" not in names:
+            raise ValueError("地图 ZIP 的唯一顶级文件夹内缺少 level.dat")
+        return
+    expected_packs = {path.name for path in pack_dirs}
+    top_levels = {name.rstrip("/").split("/", 1)[0] for name in names if name.rstrip("/")}
+    if top_levels != expected_packs:
+        raise ValueError("Addon ZIP 根目录必须直接包含全部组件包文件夹")
+    if "manifest.json" in names:
+        raise ValueError("Addon ZIP 不能把 manifest.json 直接放在 ZIP 根目录")
 
 
 def create_zip_archive(
@@ -164,7 +201,12 @@ def create_zip_archive(
     if progress is not None:
         progress(0, total)
 
-    size_bytes = _write_archive(archive, entries, progress)
+    size_bytes = _write_archive(
+        archive,
+        entries,
+        progress,
+        lambda temporary: _validate_archive_structure(temporary, root, pack_dirs),
+    )
     return ArchiveResult(str(archive), file_count, size_bytes)
 
 

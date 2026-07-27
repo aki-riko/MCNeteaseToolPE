@@ -7,8 +7,11 @@ from __future__ import annotations
 from pathlib import Path
 import zipfile
 
+import pytest
+
 from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer
 
+import src.package_backend as package_backend
 from src.package_backend import PackageBackend, create_zip_archive
 
 
@@ -71,6 +74,43 @@ def test_create_zip_archive_preserves_complete_map_and_excludes_output(tmp_path:
             "world/levelname.txt",
         ]
         assert "world/world.zip" not in bundle.namelist()
+
+
+def test_create_zip_archive_rejects_addon_pack_not_directly_under_project_root(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "addon"
+    pack = project / "wrapper" / "behavior_demo"
+    pack.mkdir(parents=True)
+    (pack / "manifest.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="工程根目录下一层"):
+        create_zip_archive(str(project))
+
+    assert not (project / "addon.zip").exists()
+
+
+def test_archive_validation_failure_preserves_previous_output(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = tmp_path / "addon"
+    pack = project / "behavior_demo"
+    pack.mkdir(parents=True)
+    (pack / "manifest.json").write_text("{}", encoding="utf-8")
+    archive = project / "addon.zip"
+    archive.write_bytes(b"previous-output")
+
+    def reject_archive(*_args: object) -> None:
+        raise ValueError("结构验收失败")
+
+    monkeypatch.setattr(package_backend, "_validate_archive_structure", reject_archive)
+
+    with pytest.raises(ValueError, match="结构验收失败"):
+        create_zip_archive(str(project))
+
+    assert archive.read_bytes() == b"previous-output"
+    assert not list(project.glob(".addon.*.tmp"))
 
 
 def _wait_for_task(backend: PackageBackend, timeout_ms: int = 10_000) -> bool:

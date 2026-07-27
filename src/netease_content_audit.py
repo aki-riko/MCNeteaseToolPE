@@ -139,9 +139,16 @@ def check_pack_layout(root: Path) -> list[ContentFinding]:
                 findings.append(
                     _finding(root, manifest, 6, "error", "地图组件包目录层级错误", relative.as_posix())
                 )
-        elif len(relative.parts) > 2:
+        elif len(relative.parts) != 2:
             findings.append(
-                _finding(root, manifest, 10, "error", "Addon 组件包嵌套过深", relative.as_posix())
+                _finding(
+                    root,
+                    manifest,
+                    10,
+                    "error",
+                    "Addon 组件包必须直接位于 ZIP 根目录下一层",
+                    relative.as_posix(),
+                )
             )
 
         if _manifest_type(manifest) == "resources" and (manifest.parent / "entities").is_dir():
@@ -166,6 +173,122 @@ def check_pack_layout(root: Path) -> list[ContentFinding]:
                 findings.append(
                     _finding(root, child, 10, "error", "组件包缺少 manifest.json", _relative(root, child))
                 )
+    return findings
+
+
+def _manifest_binding(root: Path, manifest: Path) -> tuple[str, tuple[str, tuple[int, ...]]] | None:
+    """Return the world-binding kind and identity for one valid map pack."""
+
+    relative = manifest.relative_to(root)
+    if len(relative.parts) != 3:
+        return None
+    collection = relative.parts[0].casefold()
+    if collection == "behavior_packs":
+        kind = "behavior"
+    elif collection == "resource_packs":
+        kind = "resource"
+    else:
+        return None
+    try:
+        document = json.loads(manifest.read_text(encoding="utf-8-sig"))
+        header = document["header"]
+        pack_id = header["uuid"]
+        version = header["version"]
+    except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError):
+        return None
+    if not isinstance(pack_id, str) or not (
+        isinstance(version, list)
+        and len(version) == 3
+        and all(
+            isinstance(item, int) and not isinstance(item, bool) and item >= 0
+            for item in version
+        )
+    ):
+        return None
+    return kind, (pack_id, tuple(version))
+
+
+def check_map_upload_structure(root: Path) -> list[ContentFinding]:
+    """Code 6 and upload rules for required map files and Add-on bindings."""
+
+    if not (root / "level.dat").is_file():
+        return []
+    findings: list[ContentFinding] = []
+    for name in ("level.dat_old", "levelname.txt"):
+        path = root / name
+        if not path.is_file():
+            findings.append(_finding(root, path, 6, "error", f"地图缺少 {name}", name))
+
+    expected: dict[str, set[tuple[str, tuple[int, ...]]]] = {
+        "behavior": set(),
+        "resource": set(),
+    }
+    for manifest in _manifest_paths(root):
+        binding = _manifest_binding(root, manifest)
+        if binding is not None:
+            kind, identity = binding
+            expected[kind].add(identity)
+
+    binding_files = {
+        "behavior": "world_behavior_packs.json",
+        "resource": "world_resource_packs.json",
+    }
+    for kind, identities in expected.items():
+        if not identities:
+            continue
+        path = root / binding_files[kind]
+        if not path.is_file():
+            findings.append(
+                _finding(
+                    root,
+                    path,
+                    6,
+                    "error",
+                    f"地图携带组件包但缺少 {path.name}",
+                    path.name,
+                )
+            )
+            continue
+        try:
+            document = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(document, list):
+            findings.append(
+                _finding(
+                    root,
+                    path,
+                    6,
+                    "error",
+                    f"{path.name} 顶层必须是 JSON 数组",
+                    path.name,
+                )
+            )
+            continue
+        actual: set[tuple[str, tuple[int, ...]]] = set()
+        invalid_type = False
+        for item in document:
+            if not isinstance(item, dict):
+                continue
+            pack_id = item.get("pack_id")
+            version = item.get("version")
+            if item.get("type") != "Addon":
+                invalid_type = True
+            if isinstance(pack_id, str) and isinstance(version, list) and all(
+                isinstance(part, int) and not isinstance(part, bool) for part in version
+            ):
+                actual.add((pack_id, tuple(version)))
+        if invalid_type or actual != identities:
+            findings.append(
+                _finding(
+                    root,
+                    path,
+                    6,
+                    "error",
+                    f"{path.name} 与 manifest 的 UUID/version/type 不一致",
+                    "每项必须使用对应 header.uuid、header.version，并包含 type=Addon",
+                )
+            )
     return findings
 
 
@@ -396,7 +519,7 @@ def check_level_data(root: Path) -> list[ContentFinding]:
 def check_audio(root: Path) -> list[ContentFinding]:
     findings: list[ContentFinding] = []
     for path in root.rglob("*"):
-        if not path.is_file() or "sounds" not in {part.casefold() for part in path.parts}:
+        if not path.is_file():
             continue
         suffix = path.suffix.casefold()
         if suffix in KNOWN_AUDIO_SUFFIXES:
@@ -448,6 +571,7 @@ def run_content_checks(root_dir: str) -> list[ContentFinding]:
     root = Path(root_dir).resolve()
     checks = (
         check_pack_layout,
+        check_map_upload_structure,
         check_level_data,
         check_json_numeric_keys,
         check_python_identifiers,
