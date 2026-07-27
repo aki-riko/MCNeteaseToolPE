@@ -28,6 +28,7 @@
 
 #define MyAppName "MCNeteaseToolPE"
 #define MyAppExeName "MCNeteaseToolPE.exe"
+#define MyAppUserModelID "PrismQML." + MyAppName
 #define MyAppPublisher "aki-riko"
 #define MyAppURL "https://github.com/aki-riko/MCNeteaseToolPE"
 
@@ -72,9 +73,10 @@ Source: "{#BuildDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\*"; DestDir: "{app}"; Excludes: "*.pdb,*.log"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+; 与 PrismQML 运行时派生的 AUMID 保持一致，避免 Shell 将任务栏项回退为通用图标。
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; AppUserModelID: "{#MyAppUserModelID}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; AppUserModelID: "{#MyAppUserModelID}"; Tasks: desktopicon
 
 [Run]
 ; 安装完成后启动(静默升级场景配合 /AUTORESTARTAPP 由 InnoSetup 处理)。

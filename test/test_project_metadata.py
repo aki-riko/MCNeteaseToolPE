@@ -62,6 +62,14 @@ def test_project_version_is_consistent() -> None:
     assert "vX.Y.Z.W" in _read("README.md")
 
 
+def test_installer_shortcuts_match_prismqml_app_identity() -> None:
+    installer = _read("installer/MCNeteaseToolPE.iss")
+
+    assert '#define MyAppUserModelID "PrismQML." + MyAppName' in installer
+    assert installer.count('IconFilename: "{app}\\{#MyAppExeName}"') == 2
+    assert installer.count('AppUserModelID: "{#MyAppUserModelID}"') == 2
+
+
 def test_legacy_cpp_implementation_is_removed() -> None:
     for relative_path in LEGACY_CPP_PATHS:
         assert not (PROJECT_ROOT / relative_path).exists(), relative_path
