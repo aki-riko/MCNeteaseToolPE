@@ -47,7 +47,7 @@ MCP_GLOBAL_CLEANUP_RULE = (
 )
 MCP_WORLD_UPDATE_RULE = (
     "修改世界数据前必须重新调用 inspect_world_data；若 value_truncated=true，先用 "
-    "get_world_data_value 读取完整值。update_level_dat 的 fingerprint 必须取自最新 "
+    "inspect_world_data 的 token 参数读取完整值。update_level_dat 的 fingerprint 必须取自最新 "
     "summary.fingerprint；update_world_database 的 expected_sequence 和 expected_fingerprint 必须分别取自"
     "最新 summary.extraDataSequence 和 summary.extraDataFingerprint；changes 只能使用本次读取的 token，"
     "不得复用旧值。"
@@ -134,68 +134,16 @@ def _write_annotations(title: str, *, idempotent: bool) -> ToolAnnotations:
     )
 
 
-def _project_read_tool_registrations(
+def _project_tool_registrations(
     service: ProjectToolService,
 ) -> tuple[tuple[object, ...], ...]:
     return (
-        (
-            service.get_project_overview,
-            "get_project_overview",
-            "读取绝对 project_path 指定的工程概况",
-            _read_annotations("读取工程概况"),
-        ),
-        (
-            service.audit_project,
-            "audit_project",
-            "审核绝对 project_path 指定的工程目录",
-            _read_annotations("执行打包审核"),
-        ),
-        (
-            service.preview_cleanup,
-            "preview_cleanup",
-            "预览绝对 project_path 指定目录的垃圾项",
-            _read_annotations("预览垃圾清理"),
-        ),
-    )
-
-
-def _project_write_tool_registrations(
-    service: ProjectToolService,
-) -> tuple[tuple[object, ...], ...]:
-    return (
-        (
-            service.clean_project,
-            "clean_project",
-            "清理绝对 project_path 指定目录；必须传入 confirm=true",
-            _write_annotations("清理工程", idempotent=True),
-        ),
-        (
-            service.rewrite_project_uuids,
-            "rewrite_project_uuids",
-            "重写绝对 project_path 指定目录的 UUID；必须传入 confirm=true",
-            _write_annotations("重写 UUID", idempotent=False),
-        ),
-        (
-            service.package_project,
-            "package_project",
-            "为绝对 project_path 指定目录输出 ZIP；必须传入 confirm=true",
-            _write_annotations("输出 ZIP", idempotent=False),
-        ),
         (
             service.process_project,
             "process_project",
             "按清理、审核、UUID、ZIP 顺序处理绝对 project_path；必须传入 confirm=true",
             _write_annotations("一键处理并审核", idempotent=False),
         ),
-    )
-
-
-def _project_tool_registrations(
-    service: ProjectToolService,
-) -> tuple[tuple[object, ...], ...]:
-    return (
-        *_project_read_tool_registrations(service),
-        *_project_write_tool_registrations(service),
     )
 
 
@@ -206,14 +154,8 @@ def _world_tool_registrations(
         (
             service.inspect_world_data,
             "inspect_world_data",
-            "读取并搜索绝对 level_dat_path 及同世界当前有效的 scriptData",
+            "读取并搜索绝对 level_dat_path 及同世界 scriptData；传 token 返回该项完整值",
             _read_annotations("读取世界存档数据"),
-        ),
-        (
-            service.get_world_data_value,
-            "get_world_data_value",
-            "按绝对 level_dat_path 的最新 inspect_world_data token 读取完整当前值",
-            _read_annotations("读取完整世界数据值"),
         ),
         (
             service.update_level_dat,

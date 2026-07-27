@@ -316,8 +316,9 @@ class ProjectToolService:
         query: str = "",
         source_kind: str = "all",
         max_items: int = DEFAULT_RESULT_LIMIT,
+        token: str = "",
     ) -> dict[str, object]:
-        """Read and search level.dat plus the sibling NetEase world database."""
+        """Read world data, or return one complete value selected by token."""
 
         if source_kind not in WORLD_DATA_SOURCES:
             raise ValueError("source_kind 必须是 all、levelDat 或 extraData")
@@ -325,6 +326,16 @@ class ProjectToolService:
         source_path = self._level_dat_path(level_dat_path)
         with self._lock:
             summary, rows, _netease_rows = load_level_dat_view(source_path)
+        if token:
+            row = next((item for item in rows if item.get("token") == token), None)
+            if row is None:
+                raise ValueError("指定 token 不存在；请重新读取世界数据")
+            return {
+                "summary": summary,
+                "item_count": 1,
+                "items": [self._world_row(row, include_full_value=True)],
+                "truncated": False,
+            }
         if source_kind != "all":
             rows = [row for row in rows if row.get("sourceKind") == source_kind]
         matched = matching_level_dat_rows(rows, query, []) or []
@@ -335,32 +346,13 @@ class ProjectToolService:
             "truncated": len(matched) > limit,
         }
 
-    def get_world_data_value(
-        self,
-        level_dat_path: str,
-        token: str,
-    ) -> dict[str, object]:
-        """Return the complete current value for one inspected world-data token."""
-
-        source_path = self._level_dat_path(level_dat_path)
-        with self._lock:
-            summary, rows, _netease_rows = load_level_dat_view(source_path)
-        row = next((item for item in rows if item.get("token") == token), None)
-        if row is None:
-            raise ValueError("指定 token 不存在；请重新读取世界数据")
-        return {
-            "summary": summary,
-            "path": str(row.get("path", "")),
-            "token": token,
-            "source_kind": str(row.get("sourceKind", "")),
-            "editable": bool(row.get("editable", False)),
-            "value": str(row.get("value", "")),
-        }
-
     @staticmethod
-    def _world_row(row: dict[str, object]) -> dict[str, object]:
+    def _world_row(
+        row: dict[str, object],
+        include_full_value: bool = False,
+    ) -> dict[str, object]:
         value = str(row.get("value", ""))
-        truncated = len(value) > LEVEL_DB_VALUE_PREVIEW_CHARS
+        truncated = not include_full_value and len(value) > LEVEL_DB_VALUE_PREVIEW_CHARS
         return {
             "path": str(row.get("path", "")),
             "value": value[:LEVEL_DB_VALUE_PREVIEW_CHARS] if truncated else value,

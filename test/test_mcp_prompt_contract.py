@@ -21,13 +21,11 @@ def test_mcp_service_rejects_relative_project_and_world_paths() -> None:
     change = [{"token": "current-token", "value": "updated"}]
 
     with pytest.raises(ValueError, match="project_path 必须是绝对路径"):
-        service.get_project_overview("relative-project")
-    with pytest.raises(ValueError, match="project_path 必须是绝对路径"):
-        service.clean_project("relative-project", confirm=True)
+        service.process_project("relative-project", confirm=True)
     with pytest.raises(ValueError, match="level_dat_path 必须是绝对路径"):
         service.inspect_world_data("relative-level.dat")
     with pytest.raises(ValueError, match="level_dat_path 必须是绝对路径"):
-        service.get_world_data_value("relative-level.dat", "current-token")
+        service.inspect_world_data("relative-level.dat", token="current-token")
     with pytest.raises(ValueError, match="level_dat_path 必须是绝对路径"):
         service.update_level_dat(
             "relative-level.dat", "fingerprint", change, confirm=True
@@ -52,16 +50,8 @@ def test_mcp_prompt_layers_share_complete_safety_rules() -> None:
 def test_mcp_tool_descriptions_are_self_contained() -> None:
     tools = asyncio.run(create_mcp_server(port=8766).list_tools())
     by_name = {tool.name: tool for tool in tools}
-    for name in (
-        "get_project_overview",
-        "audit_project",
-        "preview_cleanup",
-        "clean_project",
-        "rewrite_project_uuids",
-        "package_project",
-        "process_project",
-    ):
-        assert "绝对 project_path" in by_name[name].description
+    assert "绝对 project_path" in by_name["process_project"].description
+    assert "token 返回该项完整值" in by_name["inspect_world_data"].description
     assert "一次性 scan_token" in by_name["scan_global_minecraft_data"].description
     assert "recommended_category" in by_name["scan_global_minecraft_data"].description
     assert "confirm=true" in by_name["clean_global_minecraft_data"].description

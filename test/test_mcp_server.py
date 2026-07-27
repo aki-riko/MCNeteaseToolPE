@@ -19,6 +19,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 import src.mcp_project_service as mcp_service_module
 import src.mcp_server_backend as mcp_backend_module
+from src.config import LEVEL_DB_VALUE_PREVIEW_CHARS
 from src.mcp_project_service import ProjectToolService
 from src.mcp_server import (
     create_mcp_server,
@@ -221,8 +222,9 @@ def test_world_data_tools_read_and_safely_update_level_dat(tmp_path: Path) -> No
 
     inspected = service.inspect_world_data(str(level_dat), query="LevelName")
     row = inspected["items"][0]
-    complete = service.get_world_data_value(str(level_dat), str(row["token"]))
-    assert complete["value"] == "修改前"
+    complete = service.inspect_world_data(str(level_dat), token=str(row["token"]))
+    assert complete["items"][0]["value"] == "修改前"
+    assert complete["items"][0]["value_truncated"] is False
     with pytest.raises(PermissionError, match="confirm"):
         service.update_level_dat(
             str(level_dat),
@@ -238,6 +240,26 @@ def test_world_data_tools_read_and_safely_update_level_dat(tmp_path: Path) -> No
 
     assert updated["summary"]["levelName"] == "修改后"
     assert Path(updated["backup_path"]).read_bytes() != level_dat.read_bytes()
+
+
+def test_inspect_world_data_token_returns_complete_truncated_value(
+    tmp_path: Path,
+) -> None:
+    long_value = "长" * (LEVEL_DB_VALUE_PREVIEW_CHARS + 1)
+    level_dat = _make_level_dat(tmp_path / "level.dat", long_value)
+    service = ProjectToolService()
+
+    inspected = service.inspect_world_data(str(level_dat), query="LevelName")
+    preview = inspected["items"][0]
+    complete = service.inspect_world_data(
+        str(level_dat),
+        token=str(preview["token"]),
+    )
+
+    assert preview["value_truncated"] is True
+    assert preview["full_value_length"] == len(long_value)
+    assert complete["items"][0]["value"] == long_value
+    assert complete["items"][0]["value_truncated"] is False
 
 
 def test_world_database_tool_backs_up_and_updates_current_script_data(
@@ -265,22 +287,15 @@ def test_world_database_tool_backs_up_and_updates_current_script_data(
     assert result["summary"]["extraDataFingerprint"] != hashlib.sha256(
         original
     ).hexdigest()
-    current = service.get_world_data_value(
-        str(level_dat), "extra:db.scriptData.key"
+    current = service.inspect_world_data(
+        str(level_dat), token="extra:db.scriptData.key"
     )
-    assert current["value"] == '"changed"'
+    assert current["items"][0]["value"] == '"changed"'
 
 
 EXPECTED_MCP_TOOL_NAMES = {
-        "get_project_overview",
-        "audit_project",
-        "preview_cleanup",
-        "clean_project",
-        "rewrite_project_uuids",
-        "package_project",
         "process_project",
         "inspect_world_data",
-        "get_world_data_value",
         "update_level_dat",
         "update_world_database",
         "scan_global_minecraft_data",
@@ -289,8 +304,7 @@ EXPECTED_MCP_TOOL_NAMES = {
 
 
 def _assert_mcp_tool_annotations(by_name: dict[str, object]) -> None:
-    assert by_name["audit_project"].annotations.readOnlyHint is True
-    assert by_name["clean_project"].annotations.destructiveHint is True
+    assert by_name["process_project"].annotations.destructiveHint is True
     assert by_name["inspect_world_data"].annotations.readOnlyHint is True
     assert by_name["update_level_dat"].annotations.destructiveHint is True
     assert by_name["clean_global_minecraft_data"].annotations.destructiveHint is True
@@ -302,18 +316,9 @@ def _assert_mcp_tool_parameters(by_name: dict[str, object]) -> None:
         name: set(tool.inputSchema.get("required", []))
         for name, tool in by_name.items()
     }
-    for name in (
-        "get_project_overview",
-        "audit_project",
-        "preview_cleanup",
-        "clean_project",
-        "rewrite_project_uuids",
-        "package_project",
-        "process_project",
-    ):
-        assert required[name] == {"project_path"}
+    assert required["process_project"] == {"project_path"}
     assert required["inspect_world_data"] == {"level_dat_path"}
-    assert required["get_world_data_value"] == {"level_dat_path", "token"}
+    assert "token" in by_name["inspect_world_data"].inputSchema["properties"]
     assert required["update_level_dat"] == {
         "level_dat_path", "fingerprint", "changes"
     }
@@ -322,13 +327,13 @@ def _assert_mcp_tool_parameters(by_name: dict[str, object]) -> None:
     }
     assert required["scan_global_minecraft_data"] == set()
     assert required["clean_global_minecraft_data"] == {"category", "scan_token"}
-    assert "confirm" in by_name["rewrite_project_uuids"].inputSchema["properties"]
+    assert "confirm" in by_name["process_project"].inputSchema["properties"]
 
 
-def test_mcp_server_registers_thirteen_annotated_structured_tools(
+def test_mcp_server_registers_six_annotated_structured_tools(
     tmp_path: Path,
 ) -> None:
-    project = _make_project(tmp_path / "project")
+    level_dat = _make_level_dat(tmp_path / "level.dat")
     server = create_mcp_server(ProjectToolService(), port=8766)
     tools = asyncio.run(server.list_tools())
     by_name = {tool.name: tool for tool in tools}
@@ -337,9 +342,9 @@ def test_mcp_server_registers_thirteen_annotated_structured_tools(
     _assert_mcp_tool_annotations(by_name)
     _assert_mcp_tool_parameters(by_name)
     _content, structured_result = asyncio.run(
-        server.call_tool("get_project_overview", {"project_path": str(project)})
+        server.call_tool("inspect_world_data", {"level_dat_path": str(level_dat)})
     )
-    assert structured_result["pack_count"] == 1
+    assert structured_result["item_count"] > 0
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
@@ -462,7 +467,7 @@ def _wait_until(predicate, timeout_ms: int = 10_000) -> bool:
 async def _call_real_server(
     endpoint: str,
     project_path: str,
-) -> tuple[set[str], dict[str, object], bool, dict[str, object]]:
+) -> tuple[set[str], bool, dict[str, object]]:
     async with streamable_http_client(endpoint) as (
         read_stream,
         write_stream,
@@ -471,23 +476,18 @@ async def _call_real_server(
         async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
             tools = await session.list_tools()
-            result = await session.call_tool(
-                "get_project_overview",
+            refused_process = await session.call_tool(
+                "process_project",
                 {"project_path": project_path},
             )
-            refused_cleanup = await session.call_tool(
-                "clean_project",
-                {"project_path": project_path},
-            )
-            confirmed_cleanup = await session.call_tool(
-                "clean_project",
+            confirmed_process = await session.call_tool(
+                "process_project",
                 {"project_path": project_path, "confirm": True},
             )
             return (
                 {tool.name for tool in tools.tools},
-                result.structuredContent or {},
-                refused_cleanup.isError,
-                confirmed_cleanup.structuredContent or {},
+                refused_process.isError,
+                confirmed_process.structuredContent or {},
             )
 
 
@@ -506,13 +506,13 @@ def test_qt_backend_auto_starts_serves_real_client_and_stops_with_app(
 
     try:
         assert _wait_until(lambda: backend.running), messages
-        tool_names, overview, refused_cleanup, confirmed_cleanup = asyncio.run(
+        tool_names, refused_process, result = asyncio.run(
             _call_real_server(backend.endpoint, str(project))
         )
-        assert "audit_project" in tool_names
-        assert overview["pack_count"] == 1
-        assert refused_cleanup is True
-        assert confirmed_cleanup["removed_count"] == 1
+        assert tool_names == EXPECTED_MCP_TOOL_NAMES
+        assert result["success"] is True
+        assert refused_process is True
+        assert result["cleanup"]["removed_count"] == 1
         assert not junk.exists()
     finally:
         backend._shutdown_now()

@@ -56,17 +56,11 @@ MCP 服务器随桌面程序自动启动和退出。底部“MCP”页面用一�
 动态包含实际端点与安全规则的接入 Prompt；复制给 AI 后即可让它配置并验证连接。服务只允许监听 `localhost`、
 `127.0.0.1` 或其他回环 IP，不接受局域网和公网绑定。
 
-服务器提供十三个工具，覆盖桌面程序的工程处理、世界数据编辑和全局缓存清理：
+服务器只暴露六个与桌面程序用户动作对应的工具：
 
 - `process_project`：按垃圾清理 → 打包审核 → UUID 重写 → ZIP 顺序一键处理，必须显式传入 `confirm=true`。
-- `get_project_overview`：读取工程类型和组件包概况。
-- `audit_project`：执行现有只读打包审核。
-- `preview_cleanup`：只读预览垃圾项和预计占用。
-- `clean_project`：删除垃圾项，必须显式传入 `confirm=true`。
-- `rewrite_project_uuids`：重写组件包 UUID，必须显式传入 `confirm=true`。
-- `package_project`：创建或替换工程 ZIP，必须显式传入 `confirm=true`。
-- `inspect_world_data`：读取、筛选 `level.dat` 和同世界当前有效的 `scriptData`。
-- `get_world_data_value`：当读取结果标记 `value_truncated=true` 时，按最新 token 获取未截断完整值。
+- `inspect_world_data`：读取、筛选 `level.dat` 和同世界当前有效的 `scriptData`；当结果标记
+  `value_truncated=true` 时，把该项 `token` 传回同一工具即可获取完整值。
 - `update_level_dat`：把最新 `summary.fingerprint` 传给 `fingerprint`，生成 `level.dat_old`
   并原子保存 NBT 修改；必须显式传入 `confirm=true`。
 - `update_world_database`：把最新 `summary.extraDataSequence` 和 `summary.extraDataFingerprint`
