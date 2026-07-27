@@ -85,7 +85,7 @@ Minecraft 数据目录。
 
 ## 🛠️ Python 开发运行
 
-Python 重写运行时使用 PyPI 发布的固定版本 `prismqml==0.3.2.7`，不再通过
+Python 重写运行时使用 PyPI 发布的固定版本 `prismqml==0.3.2.11`，不再通过
 `PYTHONPATH` 覆盖成本地引擎源码；MCP 使用固定版本 `mcp==1.28.1`。Windows
 PowerShell 示例：
 
