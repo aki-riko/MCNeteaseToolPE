@@ -17,6 +17,7 @@ from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
+import src.mcp_project_service as mcp_service_module
 import src.mcp_server_backend as mcp_backend_module
 from src.mcp_project_service import ProjectToolService
 from src.mcp_server import (
@@ -89,6 +90,72 @@ def test_project_service_uses_call_path_and_read_tools_do_not_modify(tmp_path: P
     }
     assert audit["issue_count"] >= 0
     assert (project / "behavior_demo" / "manifest.json").read_bytes() == before
+
+
+def test_mcp_result_limits_cap_expensive_payload_normalization(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = _make_project(tmp_path / "project")
+    service = ProjectToolService()
+    audit_payload_calls = 0
+    relative_calls = 0
+
+    class FakeIssue:
+        def __init__(self, index: int) -> None:
+            self.index = index
+
+        def as_dict(self) -> dict[str, object]:
+            return {
+                "severity": "error" if self.index % 2 == 0 else "warning",
+                "path": str(project / f"issue-{self.index}.json"),
+            }
+
+    original_audit_payload = service._audit_payload
+    original_relative = service._relative
+
+    def tracked_audit_payload(root: Path, payload: dict[str, object]):
+        nonlocal audit_payload_calls
+        audit_payload_calls += 1
+        return original_audit_payload(root, payload)
+
+    def tracked_relative(root: Path, path: str | Path) -> str:
+        nonlocal relative_calls
+        relative_calls += 1
+        return original_relative(root, path)
+
+    cleanup_result = type(
+        "CleanupResult",
+        (),
+        {
+            "items": [str(project / f"junk-{index}.pyc") for index in range(100)],
+            "total_bytes": 1234,
+        },
+    )()
+    monkeypatch.setattr(
+        mcp_service_module,
+        "scan",
+        lambda _root: [FakeIssue(index) for index in range(100)],
+    )
+    monkeypatch.setattr(mcp_service_module, "_scan", lambda _root: (cleanup_result, []))
+    monkeypatch.setattr(service, "_audit_payload", tracked_audit_payload)
+    monkeypatch.setattr(service, "_relative", tracked_relative)
+
+    audit = service.audit_project(str(project), max_issues=3)
+    audit_relative_calls = relative_calls
+    cleanup = service.preview_cleanup(str(project), max_items=4)
+
+    assert audit["issue_count"] == 100
+    assert audit["error_count"] == 50
+    assert audit["warning_count"] == 50
+    assert len(audit["issues"]) == 3
+    assert audit["truncated"] is True
+    assert audit_payload_calls == 3
+    assert audit_relative_calls == 3
+    assert cleanup["item_count"] == 100
+    assert cleanup["items"] == [f"junk-{index}.pyc" for index in range(4)]
+    assert cleanup["truncated"] is True
+    assert relative_calls == 7
 
 
 def test_mutating_tools_require_confirmation_and_stay_in_project(tmp_path: Path) -> None:

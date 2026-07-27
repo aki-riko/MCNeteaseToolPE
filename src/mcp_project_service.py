@@ -133,16 +133,23 @@ class ProjectToolService:
 
     def _audit_result(self, root: Path, limit: int) -> dict[str, object]:
         issues = scan(str(root))
-        payloads = [self._audit_payload(root, issue.as_dict()) for issue in issues]
-        error_count = sum(item["severity"] == "error" for item in payloads)
-        warning_count = sum(item["severity"] == "warning" for item in payloads)
+        payloads: list[dict[str, object]] = []
+        error_count = 0
+        warning_count = 0
+        for index, issue in enumerate(issues):
+            payload = issue.as_dict()
+            severity = payload.get("severity")
+            error_count += severity == "error"
+            warning_count += severity == "warning"
+            if index < limit:
+                payloads.append(self._audit_payload(root, payload))
         return {
             "passed": error_count == 0,
             "error_count": error_count,
             "warning_count": warning_count,
-            "issue_count": len(payloads),
-            "issues": payloads[:limit],
-            "truncated": len(payloads) > limit,
+            "issue_count": len(issues),
+            "issues": payloads,
+            "truncated": len(issues) > limit,
         }
 
     def _audit_payload(
@@ -167,12 +174,12 @@ class ProjectToolService:
         limit = _validated_limit(max_items)
         with self._lock:
             result, _logs = _scan(str(root))
-            items = [self._relative(root, path) for path in result.items]
+            items = [self._relative(root, path) for path in result.items[:limit]]
         return {
-            "item_count": len(items),
+            "item_count": len(result.items),
             "total_bytes": result.total_bytes,
-            "items": items[:limit],
-            "truncated": len(items) > limit,
+            "items": items,
+            "truncated": len(result.items) > limit,
         }
 
     def clean_project(
