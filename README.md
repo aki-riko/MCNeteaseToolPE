@@ -146,6 +146,12 @@ E1101 与 E1102，其他 `E` 号全部保留。中文工程路径会只读复制
 CodeReviewError，与模块白名单违规共同阻止审核通过。未配置 Python 2.7 时，审核仍会
 继续执行白名单和其他检查，只显示一条“Python 2.7 代码审核不可用”黄色提示。
 
+媒体审核默认按网易文档检查贴图不超过 `2048×2048`，可通过
+`MCNETEASE_AUDIT_MAX_TEXTURE_DIMENSION` 调整。文件名阈值可通过
+`MCNETEASE_AUDIT_MAX_FILE_NAME_CHARS` 调整。网易当前最高 `NetworkVersion` 会随客户端
+升级变化，因此默认不猜测；取得当前平台值后，通过 `MCNETEASE_AUDIT_MAX_NETWORK_VERSION`
+启用地图版本上限审核。
+
 ## 📦 Nuitka 打包分发
 
 构建脚本要求一个空输出目录，不会自动删除或覆盖旧产物，并严格使用项目虚拟环境内

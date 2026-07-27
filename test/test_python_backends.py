@@ -505,7 +505,7 @@ def test_audit_cli_outputs_machine_readable_json(tmp_path: Path) -> None:
     assert status == 0
     assert any(
         issue["code"] == 25
-        and issue["severity"] == "warning"
+        and issue["severity"] == "error"
         for issue in issues
     )
 

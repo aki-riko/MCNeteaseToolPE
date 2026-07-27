@@ -17,6 +17,7 @@ from typing import Callable, Iterable, Iterator
 
 from .audit_codes import code_name
 from .code_review_compat import find_legacy_property_accesses
+from .config import AUDIT_MAX_FILE_NAME_CHARS
 from .legacy_pylint_runner import (
     LEGACY_PYLINT_IGNORED_MESSAGE_IDS,
     LEGACY_PYLINT_MESSAGE_IDS,
@@ -24,6 +25,7 @@ from .legacy_pylint_runner import (
     run_legacy_pylint,
 )
 from .module_whitelist import collect_local_modules, find_disallowed_imports, load_module_whitelist
+from .netease_content_audit import run_content_checks
 
 
 LOGGER = logging.getLogger(__name__)
@@ -350,7 +352,8 @@ def _append_python2_pylint_issues(
 
 def _check_root_junk(root: str, output: list[AuditIssue]) -> None:
     seen: set[str] = set()
-    for pack in _collect_pack_dirs(root):
+    scan_roots = [root] if os.path.isfile(os.path.join(root, "level.dat")) else _collect_pack_dirs(root)
+    for pack in scan_roots:
         for current, dirs, files in _walk(pack):
             for name in [*dirs, *files]:
                 path = _absolute(os.path.join(current, name))
@@ -365,8 +368,10 @@ def _check_root_junk(root: str, output: list[AuditIssue]) -> None:
 
 def _check_file_names(root: str, output: list[AuditIssue]) -> None:
     targets: list[str] = []
-    for pack in _collect_pack_dirs(root):
-        targets.append(pack)
+    scan_roots = [root] if os.path.isfile(os.path.join(root, "level.dat")) else _collect_pack_dirs(root)
+    for pack in scan_roots:
+        if pack != root:
+            targets.append(pack)
         for current, dirs, files in _walk(pack):
             targets.extend(os.path.join(current, name) for name in [*dirs, *files])
     for path in targets:
@@ -374,11 +379,11 @@ def _check_file_names(root: str, output: list[AuditIssue]) -> None:
         rel = _relative(root, path)
         if _has_non_ascii(name):
             output.append(_issue(16, "error", "文件名含中文/非 ASCII 字符", rel, path))
-        if len(name) > 80:
-            output.append(_issue(27, "warning", f"文件名过长({len(name)} 字符)", rel, path))
+        if len(name) > AUDIT_MAX_FILE_NAME_CHARS:
+            output.append(_issue(27, "error", f"文件名过长({len(name)} 字符)", rel, path))
         base = os.path.splitext(name)[0]
         if REPEATED_NAME.search(base):
-            output.append(_issue(35, "warning", "命名含 5 个以上连续相同字符", rel, path))
+            output.append(_issue(35, "error", "命名含 5 个以上连续相同字符", rel, path))
 
 
 def _check_manifests(root: str, output: list[AuditIssue]) -> None:
@@ -472,7 +477,7 @@ def _check_json_encoding(
                 try:
                     json.loads(_strip_json_comments(text))
                 except json.JSONDecodeError as error:
-                    output.append(_issue(25, "warning", f"json 解析失败:{error.msg}", rel, path))
+                    output.append(_issue(25, "error", f"json 解析失败:{error.msg}", rel, path))
         if progress is not None:
             progress(index, len(file_list), path)
 
@@ -493,13 +498,27 @@ def _check_structures_depth(root: str, output: list[AuditIssue]) -> None:
                 rel = os.path.relpath(file_path, struct_dir).replace(os.sep, "/")
                 depth = rel.count("/")
                 if depth > 1:
-                    output.append(_issue(6, "warning", f"structures 嵌套过深({depth + 1} 层)", _relative(root, file_path), file_path))
+                    output.append(_issue(6, "error", f"structures 嵌套过深({depth + 1} 层)", _relative(root, file_path), file_path))
 
 
 def _iter_all_files(root: str) -> Iterator[str]:
     for current, _dirs, files in _walk(root):
         for name in files:
             yield _absolute(os.path.join(current, name))
+
+
+def _check_netease_content_rules(root: str, output: list[AuditIssue]) -> None:
+    for finding in run_content_checks(root):
+        absolute_path = os.path.join(root, finding.path.replace("/", os.sep))
+        output.append(
+            _issue(
+                finding.code,
+                finding.severity,
+                finding.title,
+                finding.detail,
+                absolute_path,
+            )
+        )
 
 
 def scan(
@@ -517,6 +536,7 @@ def scan(
         ("检查文件与目录命名", _check_file_names),
         ("检查 manifest 配置", _check_manifests),
         ("检查资源目录冲突", _check_bad_resource_dir),
+        ("检查网易内容与媒体规则", _check_netease_content_rules),
     )
     behavior_packs = [pack for pack in _collect_pack_dirs(root) if _is_behavior_pack(pack)]
     json_files = list(_iter_named(root, suffix=".json"))
