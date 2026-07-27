@@ -20,7 +20,7 @@ from .level_dat_model import matching_level_dat_rows
 from .minecraft_cleanup_backend import MinecraftCleanupService
 from .minecraft_cleanup_definitions import MC_CLEANUP_PROTECTED_DEFINITIONS
 from .package_backend import create_zip_archive
-from .pack_scanner import scan
+from .pack_scanner import ensure_required_pack_directories, scan
 from .project_structure import classify_project
 from .uuid_backend import _analyze, _generate
 
@@ -238,6 +238,10 @@ class ProjectToolService:
             cleanup = self._pipeline_cleanup(root)
             if not cleanup["success"]:
                 return self._pipeline_stopped("cleanup", cleanup=cleanup)
+            cleanup["created_required_directories"] = [
+                self._relative(root, path)
+                for path in ensure_required_pack_directories(str(root))
+            ]
             audit = self._audit_result(root, limit)
             if not audit["passed"]:
                 return self._pipeline_stopped("audit", cleanup=cleanup, audit=audit)

@@ -595,6 +595,7 @@ def test_audit_cli_streams_progress_and_result(tmp_path: Path) -> None:
     progress = [message for message in messages if message["type"] == "progress"]
     assert progress[-1]["current"] == progress[-1]["total"]
     assert isinstance(messages[-1]["issues"], list)
+    assert (pack / "entities").is_dir()
 
 
 def test_audit_worker_command_selects_source_and_standalone_modes(
@@ -643,6 +644,7 @@ def test_audit_backend_receives_isolated_worker_progress(tmp_path: Path) -> None
     assert backend.busy is False
     assert results and results[0][0] is True
     assert progress and progress[-1][0] == progress[-1][1]
+    assert (pack / "entities").is_dir()
 
 
 def test_audit_backend_rejects_error_issues() -> None:

@@ -12,6 +12,8 @@ import sys
 
 from PySide6.QtCore import QObject, Property, QProcess, Signal, Slot
 
+from .pack_scanner import ensure_required_pack_directories
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -63,6 +65,15 @@ class AuditBackend(QObject):
         if self._busy:
             self.logMessage.emit("正忙,请稍候", "warn")
             return
+        try:
+            created = ensure_required_pack_directories(project_dir)
+        except (OSError, ValueError) as error:
+            LOGGER.exception("自动补全网易必需目录失败")
+            self.logMessage.emit(f"自动补全必需目录失败:{error}", "error")
+            self.taskFailed.emit(str(error))
+            return
+        for path in created:
+            self.logMessage.emit(f"已自动创建必需目录:{path}", "success")
         program, arguments = _audit_worker_command(project_dir)
         process = QProcess(self)
         process.setProgram(program)

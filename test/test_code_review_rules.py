@@ -21,7 +21,7 @@ from src.legacy_pylint_runner import (
     run_legacy_pylint,
 )
 from src.module_whitelist import find_import_references, load_module_whitelist
-from src.pack_scanner import scan
+from src.pack_scanner import ensure_required_pack_directories, scan
 
 
 def _manifest() -> dict[str, object]:
@@ -64,14 +64,16 @@ def test_netease_required_pack_directories(tmp_path: Path) -> None:
     )
     (resource / "shaders").mkdir()
 
+    created = ensure_required_pack_directories(str(tmp_path))
     issues = scan(str(tmp_path))
 
-    assert any(issue.code == 24 and "entities" in issue.title for issue in issues)
-    assert any(issue.code == 24 and "textures" in issue.title for issue in issues)
-
-    (behavior / "entities").mkdir()
-    (resource / "textures").mkdir()
-    issues = scan(str(tmp_path))
+    assert set(created) == {
+        str((behavior / "entities").resolve()),
+        str((resource / "textures").resolve()),
+    }
+    assert (behavior / "entities").is_dir()
+    assert (resource / "textures").is_dir()
+    assert ensure_required_pack_directories(str(tmp_path)) == []
     assert not any(issue.code == 24 and "entities" in issue.title for issue in issues)
     assert not any(issue.code == 24 and "textures" in issue.title for issue in issues)
 

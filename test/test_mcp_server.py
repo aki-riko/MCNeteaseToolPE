@@ -141,6 +141,10 @@ def test_one_click_project_tool_runs_all_four_steps(tmp_path: Path) -> None:
     assert result["success"] is True
     assert result["completed_steps"] == ["cleanup", "audit", "uuid", "package"]
     assert result["cleanup"]["removed_count"] == 1
+    assert result["cleanup"]["created_required_directories"] == [
+        "behavior_demo/entities"
+    ]
+    assert (project / "behavior_demo" / "entities").is_dir()
     assert Path(result["package"]["archive_path"]).is_file()
 
 

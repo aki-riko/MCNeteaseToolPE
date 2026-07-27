@@ -419,29 +419,30 @@ def _check_manifests(root: str, output: list[AuditIssue]) -> None:
         output.append(_issue(10, "error", "behavior_packs 下缺少 manifest.json", "behavior_packs", behavior_dir))
 
 
-def _check_resource_packs(root: str, output: list[AuditIssue]) -> None:
+def ensure_required_pack_directories(project_dir: str) -> list[str]:
+    """Create NetEase-required pack directories and return created paths."""
+
+    root = _absolute(project_dir)
+    if not os.path.isdir(root):
+        raise ValueError(f"目录无效:{project_dir}")
+    created: list[str] = []
     for path in _iter_named(root, filename="manifest.json"):
-        pack = os.path.dirname(path)
-        if _manifest_type(path) != "resources":
-            continue
-        # 网易中国版资源包模板明确要求 textures 目录存在；shader 只是
-        # 可选内容，不能用来替代 textures。
-        has_textures = os.path.isdir(os.path.join(pack, "textures"))
-        if not has_textures:
-            rel = _relative(root, pack) or "."
-            output.append(_issue(24, "error", "资源包缺少 textures 文件夹", rel, pack))
-
-
-def _check_behavior_packs(root: str, output: list[AuditIssue]) -> None:
-    """Check the one mandatory behavior-pack content directory."""
-
-    for path in _iter_named(root, filename="manifest.json"):
-        if _manifest_type(path) not in {"data", "client_data", "javascript"}:
+        module_type = _manifest_type(path)
+        if module_type in {"data", "client_data", "javascript"}:
+            required_name = "entities"
+        elif module_type == "resources":
+            required_name = "textures"
+        else:
             continue
         pack = os.path.dirname(path)
-        if not os.path.isdir(os.path.join(pack, "entities")):
-            rel = _relative(root, pack) or "."
-            output.append(_issue(24, "error", "行为包缺少 entities 文件夹", rel, pack))
+        required = os.path.join(pack, required_name)
+        if os.path.exists(required):
+            if not os.path.isdir(required):
+                raise OSError(f"必需目录路径已被文件占用:{required}")
+            continue
+        os.mkdir(required)
+        created.append(_absolute(required))
+    return created
 
 
 def _check_bad_resource_dir(root: str, output: list[AuditIssue]) -> None:
@@ -515,8 +516,6 @@ def scan(
         ("检查缓存与无关文件", _check_root_junk),
         ("检查文件与目录命名", _check_file_names),
         ("检查 manifest 配置", _check_manifests),
-        ("检查行为包结构", _check_behavior_packs),
-        ("检查资源包结构", _check_resource_packs),
         ("检查资源目录冲突", _check_bad_resource_dir),
     )
     behavior_packs = [pack for pack in _collect_pack_dirs(root) if _is_behavior_pack(pack)]
@@ -593,4 +592,4 @@ def scan(
     return issues
 
 
-__all__ = ["AuditIssue", "code_name", "scan"]
+__all__ = ["AuditIssue", "code_name", "ensure_required_pack_directories", "scan"]
