@@ -41,7 +41,7 @@ JUNK_DIR_NAMES = (
 )
 JUNK_FILE_NAMES = (".DS_Store", "Thumbs.db", "desktop.ini")
 JUNK_FILE_SUFFIXES = (".pyc", ".pyo", ".log", ".tmp", ".bak")
-REPEATED_NAME = re.compile(r"(.)\1{4,}")
+REPEATED_NAME = re.compile(r"(.)\1{5,}")
 
 
 @dataclass(frozen=True)
@@ -379,7 +379,7 @@ def _check_file_names(root: str, output: list[AuditIssue]) -> None:
         rel = _relative(root, path)
         if _has_non_ascii(name):
             output.append(_issue(16, "error", "文件名含中文/非 ASCII 字符", rel, path))
-        if len(name) > AUDIT_MAX_FILE_NAME_CHARS:
+        if AUDIT_MAX_FILE_NAME_CHARS and len(name) > AUDIT_MAX_FILE_NAME_CHARS:
             output.append(_issue(27, "error", f"文件名过长({len(name)} 字符)", rel, path))
         base = os.path.splitext(name)[0]
         if REPEATED_NAME.search(base):

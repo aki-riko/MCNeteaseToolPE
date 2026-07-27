@@ -27,15 +27,17 @@ from .image_audit_utils import image_dimensions, png_has_invalid_transparent_pix
 INT32_MIN = -2_147_483_648
 INT32_MAX = 2_147_483_647
 NUMERIC_JSON_KEY = re.compile(r":(-?\d+)$")
-REPEATED_IDENTIFIER = re.compile(r"(.)\1{4,}")
-PLAYER_RENDER_CONTROLLERS = frozenset(
-    {
-        "controller.render.player.first_person",
-        "controller.render.player.third_person",
-        "controller.render.player.first_person_bloom",
-        "controller.render.player.third_person_bloom",
-    }
-)
+REPEATED_IDENTIFIER = re.compile(r"(.)\1{5,}")
+PLAYER_RENDER_CONTROLLERS = {
+    "controller.render.player.first_person": "variable.is_first_person",
+    "controller.render.player.third_person": (
+        "!variable.is_first_person && !variable.map_face_icon"
+    ),
+    "controller.render.player.first_person_bloom": "variable.is_first_person",
+    "controller.render.player.third_person_bloom": (
+        "!variable.is_first_person && !variable.map_face_icon"
+    ),
+}
 KNOWN_AUDIO_SUFFIXES = frozenset(
     {".aac", ".flac", ".m4a", ".mp3", ".opus", ".wav", ".wma"}
 )
@@ -51,7 +53,7 @@ class ContentFinding:
 
 
 def _relative(root: Path, path: Path) -> str:
-    return path.resolve().relative_to(root).as_posix()
+    return path.relative_to(root).as_posix()
 
 
 def _finding(
@@ -265,7 +267,11 @@ def check_texture_dimensions(root: Path) -> list[ContentFinding]:
         ):
             continue
         dimensions = image_dimensions(path)
-        if dimensions and max(dimensions) > AUDIT_MAX_TEXTURE_DIMENSION:
+        if (
+            AUDIT_MAX_TEXTURE_DIMENSION
+            and dimensions
+            and max(dimensions) > AUDIT_MAX_TEXTURE_DIMENSION
+        ):
             findings.append(
                 _finding(
                     root,
@@ -282,23 +288,38 @@ def check_texture_dimensions(root: Path) -> list[ContentFinding]:
 def check_player_entity(root: Path) -> list[ContentFinding]:
     findings: list[ContentFinding] = []
     for path in root.rglob("player.entity.json"):
+        if path.parent.name.casefold() != "entity":
+            continue
         try:
             document = json.loads(_strip_json_comments(path.read_text(encoding="utf-8-sig")))
             description = document["minecraft:client_entity"]["description"]
             controllers = description.get("render_controllers", [])
         except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError):
             continue
-        present: set[str] = set()
+        present: dict[str, str] = {}
         if isinstance(controllers, list):
             for entry in controllers:
-                if isinstance(entry, str):
-                    present.add(entry)
-                elif isinstance(entry, dict):
-                    present.update(str(key) for key in entry)
-        missing = sorted(PLAYER_RENDER_CONTROLLERS - present)
-        if missing:
+                if not isinstance(entry, dict):
+                    continue
+                present.update(
+                    (str(key), re.sub(r"\s+", "", str(value)))
+                    for key, value in entry.items()
+                )
+        invalid = [
+            name
+            for name, expression in PLAYER_RENDER_CONTROLLERS.items()
+            if present.get(name) != re.sub(r"\s+", "", expression)
+        ]
+        if invalid:
             findings.append(
-                _finding(root, path, 29, "error", "player.entity.json 缺少必需渲染控制器", "、".join(missing))
+                _finding(
+                    root,
+                    path,
+                    29,
+                    "error",
+                    "player.entity.json 必需渲染控制器缺失或条件错误",
+                    "、".join(invalid),
+                )
             )
     return findings
 
@@ -399,6 +420,8 @@ def check_audio(root: Path) -> list[ContentFinding]:
 def check_glyphs(root: Path) -> list[ContentFinding]:
     findings: list[ContentFinding] = []
     for path in root.rglob("glyph_*.png"):
+        if path.parent.name.casefold() != "font":
+            continue
         dimensions = image_dimensions(path)
         if dimensions != (256, 256):
             findings.append(
