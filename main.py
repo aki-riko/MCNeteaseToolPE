@@ -279,7 +279,7 @@ def main() -> int:
     # 托盘必须在主窗口可关闭前完成装配，避免关闭后留下无入口的后台进程。
     _enable_system_tray(app, win)
     win.show()
-    # PrismQML 0.3.3.1 的 MultiEffect 阴影会在部分 Qt 渲染路径中把图标层变透明。
+    # MultiEffect 阴影会在部分 Qt 渲染路径中把 Splash 图标层变透明。
     _disable_broken_splash_icon_shadow(win)
     return app.exec()
 
