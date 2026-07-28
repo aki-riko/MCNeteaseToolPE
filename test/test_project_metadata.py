@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "0.1.0.2"
+EXPECTED_VERSION = "0.1.0.3"
 SPDX_HEADER = "SPDX-License-Identifier: GPL-3.0-or-later"
 LEGACY_LICENSE_HEADER = "MIT License " + chr(0x2014) + " MCNeteaseToolPE"
 SOURCE_PATTERNS = (
