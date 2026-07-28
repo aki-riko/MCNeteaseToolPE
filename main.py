@@ -9,10 +9,18 @@
 复用 PrismQML 的 Bar 窗口与导航。
 """
 
+import logging
 import os
 import sys
 
-from prismqml import App, WindowType
+from prismqml import (
+    ActivationReason,
+    App,
+    SystemTrayIcon,
+    Window,
+    WindowCloseEvent,
+    WindowType,
+)
 from prismqml.python.core import (
     NotificationPosition,
     showDesktopError,
@@ -44,6 +52,103 @@ WINDOW_H = 720
 _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 _QML_DIR = os.path.join(_PROJECT_ROOT, "qml")
 _APP_ICON = os.path.join(_PROJECT_ROOT, "assets", "app_icon.png")
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _move_close_request_to_tray(
+    window: Window,
+    tray_icon: SystemTrayIcon | None,
+    event: WindowCloseEvent,
+) -> bool:
+    """Hide an app window when its tray icon is active."""
+
+    if tray_icon is None or not tray_icon.isVisible():
+        return False
+    window.hide()
+    event.ignore()
+    return True
+
+
+class MainWindow(Window):
+    """Main window whose close button hides it to the enabled tray icon."""
+
+    def __init__(self, window_type: int = WindowType.BAR) -> None:
+        super().__init__(window_type=window_type)
+        self._tray_icon: SystemTrayIcon | None = None
+
+    def enableCloseToTray(self, tray_icon: SystemTrayIcon) -> None:
+        self._tray_icon = tray_icon
+
+    def closeEvent(self, event: WindowCloseEvent) -> None:
+        if _move_close_request_to_tray(self, self._tray_icon, event):
+            return
+        super().closeEvent(event)
+
+
+def _show_main_window(window: Window) -> None:
+    window.show()
+    window.raise_()
+    window.activateWindow()
+
+
+def _restore_window_from_tray(reason: int, window: Window) -> None:
+    if reason in (
+        ActivationReason.Trigger.value,
+        ActivationReason.DoubleClick.value,
+    ):
+        _show_main_window(window)
+
+
+def _create_main_window(app: App) -> MainWindow:
+    """Create an App-owned main window with the shared application icon."""
+
+    window = MainWindow(WindowType.BAR)
+    if app.application_icon:
+        window.setWindowIcon(app.application_icon, app.application_icon_colored)
+    app.windows.append(window)
+    return window
+
+
+def _build_system_tray(app: App, window: MainWindow) -> SystemTrayIcon:
+    """Build the PrismQML tray icon, menu, and activation behavior."""
+
+    tray_icon = SystemTrayIcon(
+        icon=window.windowIcon(),
+        parent=window,
+        toolTip=APP_TITLE,
+        menuOnLeftClick=False,
+    )
+    tray_icon.addAction(
+        "显示主窗口",
+        actionId="show-main-window",
+        triggered=lambda: _show_main_window(window),
+    )
+    tray_icon.addSeparator()
+    tray_icon.addAction(
+        "退出",
+        actionId="quit-application",
+        triggered=app.quit,
+    )
+    tray_icon.activated.connect(
+        lambda reason: _restore_window_from_tray(reason, window)
+    )
+    return tray_icon
+
+
+def _enable_system_tray(app: App, window: MainWindow) -> SystemTrayIcon | None:
+    """Enable the tray when supported, preserving normal exit otherwise."""
+
+    if not SystemTrayIcon.isSystemTrayAvailable():
+        LOGGER.warning("系统托盘不可用；关闭主窗口将正常退出应用")
+        return None
+
+    tray_icon = _build_system_tray(app, window)
+    tray_icon.show()
+
+    window.enableCloseToTray(tray_icon)
+    app.setQuitOnLastWindowClosed(False)
+    return tray_icon
 
 
 def _page_factory(name, backend=None):
@@ -96,7 +201,7 @@ def main() -> int:
     app.engine.rootContext().setContextProperty("appProjectHomepage", PROJECT_HOMEPAGE)
     app.engine.rootContext().setContextProperty("prismQmlHomepage", PRISMQML_HOMEPAGE)
 
-    win = app.create_window(WindowType.BAR)
+    win = _create_main_window(app)
     win.setWindowTitle(APP_TITLE)
     win.resize(WINDOW_W, WINDOW_H)
 
@@ -140,6 +245,8 @@ def main() -> int:
         position="bottom",
     )
 
+    # 托盘必须在主窗口可关闭前完成装配，避免关闭后留下无入口的后台进程。
+    _enable_system_tray(app, win)
     win.show()
     return app.exec()
 
