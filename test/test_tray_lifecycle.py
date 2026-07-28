@@ -83,6 +83,34 @@ class _FakeApp:
         self.quit_on_last_window_closed = enabled
 
 
+class _FakeSplash:
+    def __init__(self, accepts_property: bool = True) -> None:
+        self.accepts_property = accepts_property
+        self.properties: dict[str, object] = {}
+
+    def setProperty(self, name: str, value: object) -> bool:
+        self.properties[name] = value
+        return self.accepts_property
+
+
+class _FakeSplashRoot:
+    def __init__(self, splash: _FakeSplash | None) -> None:
+        self.splash = splash
+
+    def property(self, name: str):
+        assert name == "_splashInstance"
+        return self.splash
+
+
+class _FakeSplashWindow:
+    def __init__(self, splash: _FakeSplash | None = None) -> None:
+        self._window = _FakeSplashRoot(splash) if splash is not None else None
+        self.splash_arguments: dict[str, str] = {}
+
+    def showSplash(self, **kwargs: str) -> None:
+        self.splash_arguments = kwargs
+
+
 def test_close_request_hides_window_when_tray_is_visible() -> None:
     window = _FakeWindow()
     tray_icon = _FakeTray()
@@ -143,3 +171,30 @@ def test_unavailable_tray_keeps_normal_last_window_exit(monkeypatch) -> None:
     assert main._enable_system_tray(app, window) is None
     assert window.tray_icon is None
     assert app.quit_on_last_window_closed is True
+
+
+def test_splash_branding_is_explicit() -> None:
+    window = _FakeSplashWindow()
+
+    main._configure_splash(window)
+
+    assert window.splash_arguments == {
+        "icon": main._APP_ICON,
+        "title": main.APP_TITLE,
+        "subtitle": main.SPLASH_SUBTITLE,
+    }
+
+
+def test_splash_icon_shadow_is_disabled_after_root_creation() -> None:
+    splash = _FakeSplash()
+    window = _FakeSplashWindow(splash)
+
+    assert main._disable_broken_splash_icon_shadow(window) is True
+    assert splash.properties == {"enableShadow": False}
+
+
+def test_splash_icon_shadow_workaround_reports_missing_root(caplog) -> None:
+    window = _FakeSplashWindow()
+
+    assert main._disable_broken_splash_icon_shadow(window) is False
+    assert "Splash 根窗口尚未创建" in caplog.text
