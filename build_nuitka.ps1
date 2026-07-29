@@ -10,6 +10,8 @@ param(
     [string]$McStubsPath = "",
     [string]$Python27SitePackages = "",
     [string]$Python27DllPath = "",
+    [ValidateRange(0, 128)]
+    [int]$NuitkaJobs = 0,
     [string]$OutputDir = (Join-Path $PSScriptRoot "build\nuitka")
 )
 
@@ -152,6 +154,9 @@ $arguments = @(
     "--include-data-dir=$(Join-Path $projectRoot 'qml')=qml",
     "--include-data-dir=$engineQml=prismqml\PrismQML"
 )
+if ($NuitkaJobs -gt 0) {
+    $arguments += "--jobs=$NuitkaJobs"
+}
 if ($null -ne $mcStubs) {
     $arguments += "--include-data-dir=$mcStubs=mc_stubs"
 }

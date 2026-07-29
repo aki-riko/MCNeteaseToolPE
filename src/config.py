@@ -30,7 +30,7 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
 
 APP_TITLE = _env("MCNETEASE_APP_TITLE", "我的世界中国版打包工具")
 SPLASH_SUBTITLE = _env("MCNETEASE_SPLASH_SUBTITLE", "正在加载，请稍候…")
-APP_VERSION = _env("MCNETEASE_APP_VERSION", "v0.1.0.3")
+APP_VERSION = _env("MCNETEASE_APP_VERSION", "v0.1.0.4")
 UPDATE_REPO = _env("MCNETEASE_UPDATE_REPO", "aki-riko/MCNeteaseToolPE")
 UPDATE_ASSET_KEYWORD = _env("MCNETEASE_UPDATE_ASSET_KEYWORD", "Setup")
 PROJECT_HOMEPAGE = _env(

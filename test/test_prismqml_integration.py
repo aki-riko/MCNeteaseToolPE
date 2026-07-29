@@ -27,8 +27,10 @@ def _read(relative_path: str) -> str:
 
 def test_prismqml_release_is_pinned_and_installed() -> None:
     requirements = _read("requirements.txt")
+    readme = _read("README.md")
 
     assert f"prismqml=={EXPECTED_PRISMQML_VERSION}" in requirements.splitlines()
+    assert f"`prismqml=={EXPECTED_PRISMQML_VERSION}`" in readme
     assert version("prismqml") == EXPECTED_PRISMQML_VERSION
 
 
@@ -90,6 +92,8 @@ def test_nuitka_script_builds_a_gui_executable_without_a_new_console() -> None:
 
     assert '"--windows-console-mode=attach"' in source
     assert '"--windows-console-mode=hide"' not in source
+    assert "[int]$NuitkaJobs = 0" in source
+    assert '"--jobs=$NuitkaJobs"' in source
     assert "Get-WindowsPeSubsystem" in source
     assert "$windowsGuiSubsystem = 2" in source
 
