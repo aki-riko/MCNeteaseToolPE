@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// 面向日常优化的一键 Tracy 函数热点检测卡片。
+// 面向日常优化的一键 Tracy、AirPerf 与系统指标检测卡片。
 import QtQuick
 import QtQuick.Layouts
 import PrismQML
@@ -22,9 +22,11 @@ Card {
     readonly property var reportRecommendations: report.recommendations || []
     readonly property bool ready: state.binAvailable === true && state.reachable === true
     readonly property bool busy: state.busy === true
-    readonly property bool continuousActive: state.continuousActive === true
+    readonly property bool continuousActive: performanceState.unifiedMonitoring === true
+                                            || state.continuousActive === true
     readonly property bool stopRequested: state.stopRequested === true
     readonly property bool autoMonitoring: performanceState.autoMonitoring !== false
+    readonly property var airperfState: performanceState.airperf || ({})
     readonly property int windowsCompleted: Number(state.windowsCompleted || 0)
     readonly property var detectedProcess: _processByPid(selectedPid)
     readonly property var selectedSummary: _captureById(state.selectedCaptureId || "")
@@ -77,9 +79,12 @@ Card {
     }
 
     function _guideText() {
-        if (stopRequested) return qsTr("CPU/内存已停止，正在完成当前 Tracy 窗口并汇总报告。")
+        if (stopRequested) return qsTr("CPU/内存与 AirPerf 已停止，正在完成当前 Tracy 窗口并汇总报告。")
         if (continuousActive) {
-            return qsTr("持续监测中，已完成 %1 个窗口；请正常操作，退出 MC 会自动停止。")
+            if (airperfState.status === "failed") {
+                return qsTr("Tracy 与 CPU/内存持续监测中；%1").arg(airperfState.message || qsTr("AirPerf 采集不可用"))
+            }
+            return qsTr("Tracy、AirPerf、CPU/内存持续监测中，已完成 %1 个窗口；退出 MC 会自动停止。")
                 .arg(windowsCompleted)
         }
         if (state.statusChecked !== true) return qsTr("正在检查检测环境…")

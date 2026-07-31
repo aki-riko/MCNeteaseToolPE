@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// 一键持续 Tracy、CPU 与内存监测页面。
+// 一键持续 Tracy、AirPerf、CPU 与内存监测页面。
 import QtQuick
 import QtQuick.Layouts
 import PrismQML

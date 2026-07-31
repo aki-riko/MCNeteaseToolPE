@@ -37,10 +37,9 @@ MCNeteaseToolPE 面向网易 MC 中国版的地图与组件开发者,在提交�
   同级 `db` 的当前有效 `scriptData/ExtraData`，可直接校验和编辑地图、撤离点、拉闸方块、
   闸门控制台等 JSON。保存必须在世界关闭时执行；工具会先完整备份 `db` 目录，校验
   LevelDB sequence 与内容指纹，再追加 WAL 并重读验证，失败时自动回滚。
-- **📈 性能诊断**：自动发现 MCStudio 自带的 Tracy 与 AirPerf，按需启动官方工具；
-  无额外依赖地监测 ModPC/Minecraft 进程的 CPU、当前工作集和峰值工作集，并绘制最近
-  120 秒曲线；还可直连 ModPC 内嵌 Tracy，采集函数 self/total/calls 热点并做等时长
-  基线/复测 diff。页面另提供网易公开的服务端 CPU/内存火焰图 ModAPI 示例与当前公开性能标准。
+- **📈 性能诊断**：自动识别 ModPC/Minecraft，进入游戏自动开始、退出自动停止；统一持续
+  采集进程 CPU/内存、ModPC 内嵌 Tracy 热点，以及 AirPerf aphost 的系统、GPU、磁盘和
+  进程 IO 指标，手动停止或游戏退出后生成整段会话报告。
 
 ## 🚀 基于 PrismQML 引擎
 
@@ -88,8 +87,10 @@ Minecraft 数据目录。
 
 ## 📈 性能诊断
 
-“性能诊断”页面的 Tracy GUI 与 AirPerf 入口只桥接本机已经安装的官方性能工具，
-不复制或重新分发 MCStudio 文件。
+“性能诊断”不启动 Tracy GUI 或 AirPerf GUI。程序直接连接 ModPC 内嵌 Tracy，并按需从
+本机已安装的 `airperf_service.exe` 中解出对应架构的 aphost 运行文件，再通过已还原的本地
+ZeroMQ RPC 读取官方 Win 计数器。仓库和安装包不复制或重新分发 MCStudio/AirPerf 文件，
+也不接入 AirPerf 账号与登录服务。
 程序按显式环境变量、`PATH`、Windows 程序目录的顺序查找 MCStudio；非标准安装位置可用
 `MCNETEASE_MCSTUDIO_ROOT` 指定，例如：
 
@@ -98,7 +99,11 @@ $env:MCNETEASE_MCSTUDIO_ROOT = "MCSTUDIO_ROOT"
 & ".\.venv\Scripts\python.exe" main.py
 ```
 
-本地曲线通过 Windows API 读取目标进程 CPU 与工作集，不需要安装 `psutil`。CPU/内存
+本地曲线通过 Windows API 读取目标进程 CPU 与工作集，不需要安装 `psutil`。AirPerf RPC
+同样不依赖 `pyzmq`，直接加载已安装 AirPerf 自带的 `libzmq`。运行时缓存目录可用
+`MCNETEASE_AIRPERF_RUNTIME_DIR` 覆盖；RPC 与启动超时可用
+`MCNETEASE_AIRPERF_RPC_TIMEOUT_MS`、`MCNETEASE_AIRPERF_START_TIMEOUT_MS` 覆盖。
+CPU/内存
 火焰图按钮复制网易公开的 `StartProfile`/`StopProfile` 与
 `StartMemProfile`/`StopMemProfile` 调试脚本，生成的 SVG 位于 ModPC 目录；提审前必须
 移除项目中的诊断调用。

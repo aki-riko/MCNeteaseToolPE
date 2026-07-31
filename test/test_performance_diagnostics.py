@@ -78,6 +78,33 @@ class _FakeTaskHandle(QObject):
     failed = Signal(object)
 
 
+class _FakeAirPerfMonitor:
+    def __init__(self) -> None:
+        self.start_calls: list[tuple[Path, int, str]] = []
+        self.stop_calls = 0
+        self._active = False
+
+    @property
+    def state(self) -> dict[str, object]:
+        return {
+            "active": self._active,
+            "status": "monitoring" if self._active else "complete",
+            "sampleCount": 2,
+            "metrics": [
+                {"label": "AirPerf GPU 峰值", "value": "75.0%"},
+            ],
+        }
+
+    def start(self, root: Path, pid: int, name: str) -> bool:
+        self.start_calls.append((root, pid, name))
+        self._active = True
+        return True
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+        self._active = False
+
+
 def _reachable_tracy_probe() -> dict[str, object]:
     return {
         "address": "127.0.0.1",
@@ -295,6 +322,39 @@ def test_unified_monitoring_stops_after_current_window_and_combines_system_metri
     assert metrics["CPU 峰值"] == "12.5%"
     assert metrics["内存峰值"] == "640.0 MB"
     assert metrics["系统采样"] == "1"
+
+
+def test_unified_monitoring_aggregates_direct_airperf_lifecycle_and_report(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _application()
+    handle = _FakeTaskHandle()
+    monkeypatch.setattr("prismqml.run_in_pool", lambda _operation, *_args: handle)
+    service = tmp_path / "airperf" / "airperf_service.exe"
+    service.parent.mkdir(parents=True)
+    service.write_bytes(b"service")
+    airperf = _FakeAirPerfMonitor()
+    backend = PerformanceBackend(
+        locator=_FakeLocator(tmp_path),
+        sampler=_FakeSampler(),
+        tracy_probe=_reachable_tracy_probe,
+        tracy_capture_runner=lambda _seconds, _filter, _top: {},
+        airperf_monitor=airperf,
+    )
+    backend.refresh()
+
+    backend.startUnifiedMonitoring()
+    assert airperf.start_calls == [(tmp_path, 42, "Minecraft.Windows.exe")]
+    assert backend.state["airperf"]["active"] is True
+
+    backend.stopUnifiedMonitoring()
+    handle.succeeded.emit(_tracy_capture_payload())
+    metrics = {
+        item["label"]: item["value"]
+        for item in backend.state["tracy"]["report"]["metrics"]
+    }
+    assert airperf.stop_calls == 1
+    assert metrics["AirPerf GPU 峰值"] == "75.0%"
 
 
 def test_default_auto_monitoring_waits_for_new_process_after_manual_stop(

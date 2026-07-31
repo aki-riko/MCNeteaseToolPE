@@ -10,13 +10,15 @@ from typing import Callable
 
 from PySide6.QtCore import QObject, Property, QProcess, QTimer, Signal, Slot
 
+from .airperf_backend import AIRPERF_SERVICE_NAME, AirPerfMonitor
 from .config import TRACY_PROBE_INTERVAL_MS
-from .performance_monitor import (
-    MCSTUDIO_ROOT_ENV,
-    PerformanceToolLocator,
-    ProcessDescriptor,
-    ProcessSample,
-    WindowsProcessSampler,
+from .performance_monitor import MCSTUDIO_ROOT_ENV, PerformanceToolLocator, ProcessDescriptor
+from .performance_monitor import ProcessSample, WindowsProcessSampler
+from .performance_snippets import (
+    CPU_PROFILE_SNIPPET,
+    MEMORY_PROFILE_SNIPPET,
+    PROFILE_SNIPPETS,
+    default_clipboard_setter,
 )
 from .tracy_backend import MAX_TRACY_CAPTURES, TracyPerformanceController
 
@@ -25,36 +27,6 @@ LOGGER = logging.getLogger(__name__)
 SAMPLE_INTERVAL_MS = 1000
 MAX_HISTORY_SAMPLES = 120
 
-CPU_PROFILE_SNIPPET = """import time
-import mod.server.extraServerApi as serverApi
-
-def StartCpuProfile(seconds):
-    if not serverApi.StartProfile():
-        return False
-    fileName = "profile_%d.svg" % int(time.time())
-    gameComp = serverApi.GetEngineCompFactory().CreateGame(serverApi.GetLevelId())
-    gameComp.AddTimer(seconds, lambda: serverApi.StopProfile(fileName))
-    return True
-"""
-
-MEMORY_PROFILE_SNIPPET = """import time
-import mod.server.extraServerApi as serverApi
-
-def StartMemoryProfile(seconds):
-    if not serverApi.StartMemProfile():
-        return False
-    fileName = "memory_profile_%d.svg" % int(time.time())
-    gameComp = serverApi.GetEngineCompFactory().CreateGame(serverApi.GetLevelId())
-    gameComp.AddTimer(seconds, lambda: serverApi.StopMemProfile(fileName))
-    return True
-"""
-
-PROFILE_SNIPPETS = {
-    "cpu": CPU_PROFILE_SNIPPET,
-    "memory": MEMORY_PROFILE_SNIPPET,
-}
-
-
 def _default_launcher(executable: Path) -> bool:
     launched, _pid = QProcess.startDetached(
         str(executable),
@@ -62,15 +34,6 @@ def _default_launcher(executable: Path) -> bool:
         str(executable.parent),
     )
     return bool(launched)
-
-
-def _default_clipboard_setter(text: str) -> None:
-    from PySide6.QtGui import QGuiApplication
-
-    clipboard = QGuiApplication.clipboard()
-    if clipboard is None:
-        raise RuntimeError("系统剪贴板不可用")
-    clipboard.setText(text)
 
 
 def _create_default_sampler() -> WindowsProcessSampler | None:
@@ -98,12 +61,23 @@ class PerformanceBackend(QObject):
         tracy_capture_runner: (
             Callable[[int, str, int], dict[str, object]] | None
         ) = None,
+        airperf_monitor: object | None = None,
     ) -> None:
         super().__init__(parent)
+        self._initialize_state(locator, sampler, launcher, clipboard_setter)
+        self._initialize_monitors(tracy_probe, tracy_capture_runner, airperf_monitor)
+
+    def _initialize_state(
+        self,
+        locator: PerformanceToolLocator | None,
+        sampler: object | None,
+        launcher: Callable[[Path], bool] | None,
+        clipboard_setter: Callable[[str], None] | None,
+    ) -> None:
         self._locator = locator or PerformanceToolLocator()
         self._sampler = sampler if sampler is not None else _create_default_sampler()
         self._launcher = launcher or _default_launcher
-        self._clipboard_setter = clipboard_setter or _default_clipboard_setter
+        self._clipboard_setter = clipboard_setter or default_clipboard_setter
         self._discovery = self._empty_discovery()
         self._processes: list[ProcessDescriptor] = []
         self._selected_pid = 0
@@ -118,12 +92,20 @@ class PerformanceBackend(QObject):
         self._session_cpu_total = 0.0
         self._session_cpu_peak = 0.0
         self._session_memory_peak = 0.0
+
+    def _initialize_monitors(
+        self,
+        tracy_probe: Callable[[], dict[str, object]] | None,
+        tracy_capture_runner: Callable[[int, str, int], dict[str, object]] | None,
+        airperf_monitor: object | None,
+    ) -> None:
         self._tracy = TracyPerformanceController(
             self.stateChanged.emit,
             self._emit_result,
             probe=tracy_probe,
             capture_runner=tracy_capture_runner,
         )
+        self._airperf = airperf_monitor or AirPerfMonitor(self.stateChanged.emit)
         self._timer = QTimer(self)
         self._timer.setInterval(SAMPLE_INTERVAL_MS)
         self._timer.timeout.connect(self._sample_selected_process)
@@ -156,7 +138,11 @@ class PerformanceBackend(QObject):
             "processes": [self._process_payload(item) for item in self._processes],
             "selectedPid": self._selected_pid,
             "monitoring": self._monitoring,
-            "unifiedMonitoring": self._monitoring or self._tracy.continuous_active,
+            "unifiedMonitoring": (
+                self._monitoring
+                or self._tracy.continuous_active
+                or bool(self._airperf.state.get("active"))
+            ),
             "autoMonitoring": self._auto_monitoring,
             "cpuPercent": round(sample.cpu_percent, 1) if sample else 0.0,
             "workingSetMb": round(sample.working_set_mb, 1) if sample else 0.0,
@@ -164,6 +150,7 @@ class PerformanceBackend(QObject):
             "cpuHistory": list(self._cpu_history),
             "memoryHistory": list(self._memory_history),
             "tracy": tracy_state,
+            "airperf": self._airperf.state,
         }
 
     def _tracy_state_with_system_metrics(self) -> dict[str, object]:
@@ -183,6 +170,9 @@ class PerformanceBackend(QObject):
                     {"label": "系统采样", "value": str(self._session_sample_count)},
                 ]
             )
+        airperf_metrics = self._airperf.state.get("metrics", [])
+        if isinstance(airperf_metrics, list):
+            metrics.extend(item for item in airperf_metrics if isinstance(item, dict))
         combined["metrics"] = metrics
         tracy_state["report"] = combined
         return tracy_state
@@ -221,7 +211,7 @@ class PerformanceBackend(QObject):
         tracy_needs_stop = (
             self._tracy.continuous_active and not tracy_state.get("stopRequested")
         )
-        if self._monitoring or tracy_needs_stop:
+        if self._monitoring or tracy_needs_stop or self._airperf.state.get("active"):
             self._stop_unified_monitoring(
                 "目标进程已退出，监测正在结束",
                 success=False,
@@ -241,7 +231,7 @@ class PerformanceBackend(QObject):
         if target not in available_pids:
             self._emit_result(False, f"进程 PID {target} 已不存在")
             return
-        if self._monitoring or self._tracy.continuous_active:
+        if self._monitoring or self._tracy.continuous_active or self._airperf.state.get("active"):
             self._stop_unified_monitoring("", manual=True)
         self._selected_pid = target
         self._last_sample = None
@@ -274,7 +264,7 @@ class PerformanceBackend(QObject):
         self._start_unified_monitoring(automatic=False)
 
     def _start_unified_monitoring(self, *, automatic: bool) -> bool:
-        if self._monitoring or self._tracy.continuous_active:
+        if self._monitoring or self._tracy.continuous_active or self._airperf.state.get("active"):
             if not automatic:
                 self._emit_result(False, "持续监测已经在运行")
             return False
@@ -288,6 +278,7 @@ class PerformanceBackend(QObject):
         if not self._start_process_monitoring():
             self._tracy.stop_continuous()
             return False
+        self._start_airperf_monitoring()
         self._auto_blocked_pid = 0
         mode = "自动" if automatic else "手动"
         self._emit_result(True, f"{mode}持续监测已开始，退出游戏或点击停止后生成报告")
@@ -310,6 +301,7 @@ class PerformanceBackend(QObject):
         if manual and self._selected_pid:
             self._auto_blocked_pid = self._selected_pid
         self._stop_monitoring("")
+        self._airperf.stop()
         tracy_stopping = self._tracy.stop_continuous()
         if message:
             suffix = "" if tracy_stopping else "，报告已收口"
@@ -335,6 +327,21 @@ class PerformanceBackend(QObject):
         self._cpu_history = []
         self._memory_history = []
         self._sample_number = 0
+
+    def _start_airperf_monitoring(self) -> None:
+        root_value = str(self._discovery.get("root", "")).strip()
+        target = next(
+            (item for item in self._processes if item.pid == self._selected_pid),
+            None,
+        )
+        if not root_value or target is None:
+            return
+        service = Path(root_value) / "airperf" / AIRPERF_SERVICE_NAME
+        if not service.is_file():
+            LOGGER.info("未找到 AirPerf 本地服务资源，跳过直接指标采集：%s", service)
+            self._airperf.mark_unavailable("未找到 AirPerf 本地服务资源")
+            return
+        self._airperf.start(Path(root_value), target.pid, target.name)
 
     def _stop_monitoring(self, message: str, *, success: bool = True) -> None:
         self._timer.stop()
@@ -412,7 +419,12 @@ class PerformanceBackend(QObject):
             if self._auto_blocked_pid in available_pids:
                 return
             self._auto_blocked_pid = 0
-        if not self._selected_pid or self._monitoring or self._tracy.continuous_active:
+        if (
+            not self._selected_pid
+            or self._monitoring
+            or self._tracy.continuous_active
+            or self._airperf.state.get("active")
+        ):
             return
         tracy_state = self._tracy.state
         if tracy_state.get("binAvailable") and tracy_state.get("reachable"):
@@ -485,14 +497,3 @@ class PerformanceBackend(QObject):
 
     def _emit_result(self, success: bool, message: str) -> None:
         self.result.emit({"success": success, "message": message})
-
-
-__all__ = [
-    "CPU_PROFILE_SNIPPET",
-    "MAX_HISTORY_SAMPLES",
-    "MAX_TRACY_CAPTURES",
-    "MEMORY_PROFILE_SNIPPET",
-    "PROFILE_SNIPPETS",
-    "PerformanceBackend",
-    "SAMPLE_INTERVAL_MS",
-]
