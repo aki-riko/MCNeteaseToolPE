@@ -20,6 +20,8 @@ Card {
         var rows = []
         var improved = diff.improved || []
         var regressed = diff.regressed || []
+        var added = diff.added || []
+        var removed = diff.removed || []
         for (var i = 0; i < improved.length; i++) {
             var win = Object.assign({}, improved[i])
             win.kind = "improved"
@@ -29,6 +31,16 @@ Card {
             var loss = Object.assign({}, regressed[j])
             loss.kind = "regressed"
             rows.push(loss)
+        }
+        for (var k = 0; k < added.length; k++) {
+            var fresh = Object.assign({}, added[k])
+            fresh.kind = "added"
+            rows.push(fresh)
+        }
+        for (var m = 0; m < removed.length; m++) {
+            var gone = Object.assign({}, removed[m])
+            gone.kind = "removed"
+            rows.push(gone)
         }
         return rows
     }
@@ -50,6 +62,19 @@ Card {
 
     function _number(value, decimals) {
         return Number(value || 0).toFixed(decimals)
+    }
+
+    function _diffKindText(kind) {
+        if (kind === "improved") return qsTr("改善")
+        if (kind === "regressed") return qsTr("回退")
+        if (kind === "added") return qsTr("新增")
+        return qsTr("消失")
+    }
+
+    function _diffKindStatus(kind) {
+        if (kind === "improved") return Enums.statusLevel.success
+        if (kind === "regressed") return Enums.statusLevel.warning
+        return Enums.statusLevel.info
     }
 
     Column {
@@ -83,7 +108,7 @@ Card {
                 status: root.state.binAvailable ? Enums.statusLevel.success : Enums.statusLevel.error
             }
             Tag {
-                text: root.state.reachable ? qsTr("ModPC 已连接") : qsTr("ModPC 未连接")
+                text: root.state.reachable ? qsTr("Tracy 端口可达") : qsTr("Tracy 端口不可达")
                 status: root.state.reachable ? Enums.statusLevel.success : Enums.statusLevel.warning
             }
             Button {
@@ -298,9 +323,8 @@ Card {
                     required property var modelData
                     width: parent ? parent.width : 0
                     Tag {
-                        text: modelData.kind === "improved" ? qsTr("改善") : qsTr("回退")
-                        status: modelData.kind === "improved"
-                                ? Enums.statusLevel.success : Enums.statusLevel.warning
+                        text: root._diffKindText(modelData.kind)
+                        status: root._diffKindStatus(modelData.kind)
                     }
                     Label {
                         Layout.fillWidth: true

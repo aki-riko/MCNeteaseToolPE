@@ -387,6 +387,9 @@ def test_performance_page_is_registered_and_declares_fidelity_boundary() -> None
         'objectName: "tracyBaselineSelector"',
         'objectName: "tracyComparisonSelector"',
         'objectName: "tracyCompareButton"',
+        'qsTr("新增")',
+        'qsTr("消失")',
+        'qsTr("Tracy 端口可达")',
         "窗口平均 FPS 不等于网易手机集群的 p1/p5 或机审平均帧率",
     ):
         assert contract in tracy_source

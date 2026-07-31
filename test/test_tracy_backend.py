@@ -121,3 +121,49 @@ def test_controller_rejects_invalid_worker_payload(monkeypatch) -> None:
     assert controller.state["captures"] == []
     assert results[-1][0] is False
     assert "后台返回值不是有效采样数据" in results[-1][1]
+
+
+def test_controller_clears_diff_when_capture_limit_evicts_baseline(monkeypatch) -> None:
+    handles = [_FakeTaskHandle(), _FakeTaskHandle(), _FakeTaskHandle()]
+    scheduled: list[object] = []
+    results: list[tuple[bool, str]] = []
+
+    def fake_run_in_pool(_operation, *_arguments):
+        handle = handles[len(scheduled)]
+        scheduled.append(handle)
+        return handle
+
+    monkeypatch.setattr("prismqml.run_in_pool", fake_run_in_pool)
+    monkeypatch.setattr("src.tracy_backend.MAX_TRACY_CAPTURES", 2)
+    controller = _controller(results)
+
+    controller.capture(10, "Demo", "before")
+    handles[0].succeeded.emit(_capture_payload(20.0))
+    controller.capture(10, "Demo", "after")
+    handles[1].succeeded.emit(_capture_payload(8.0))
+    assert controller.state["diff"]["summary"]["deltaMs"] == -12.0
+
+    controller.capture(10, "Demo", "after")
+    handles[2].succeeded.emit(_capture_payload(6.0))
+
+    assert controller.state["baselineCaptureId"] == ""
+    assert controller.state["diff"] == {}
+
+
+def test_controller_rejects_duration_before_scheduling(monkeypatch) -> None:
+    scheduled: list[object] = []
+    results: list[tuple[bool, str]] = []
+
+    def fake_run_in_pool(*arguments):
+        scheduled.append(arguments)
+        return _FakeTaskHandle()
+
+    monkeypatch.setattr("prismqml.run_in_pool", fake_run_in_pool)
+    controller = _controller(results)
+
+    controller.capture(0, "", "before")
+
+    assert scheduled == []
+    assert controller.state["busy"] is False
+    assert results[-1][0] is False
+    assert "采样时长必须在" in results[-1][1]

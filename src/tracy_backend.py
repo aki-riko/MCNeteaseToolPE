@@ -9,6 +9,7 @@ from collections.abc import Callable, Mapping
 
 from .tracy_analysis import (
     DEFAULT_TOP_ROWS,
+    MAX_CAPTURE_SECONDS,
     TracyAnalysisError,
     capture_tracy,
     diff_tracy_captures,
@@ -81,14 +82,20 @@ class TracyPerformanceController:
         capture_label = self._validate_capture_request(label)
         if capture_label is None:
             return
-        self.refresh_status()
-        if not self._capture_is_ready():
-            return
         try:
             duration = int(seconds)
         except (TypeError, ValueError) as error:
             LOGGER.warning("Tracy 采样时长无效：%r", seconds)
             self._emit_result(False, f"Tracy 采样时长无效：{error}")
+            return
+        if duration < 1 or duration > MAX_CAPTURE_SECONDS:
+            self._emit_result(
+                False,
+                f"Tracy 采样时长必须在 1-{MAX_CAPTURE_SECONDS} 秒之间",
+            )
+            return
+        self.refresh_status()
+        if not self._capture_is_ready():
             return
         self._start_capture_task(duration, name_contains.strip(), capture_label)
 
@@ -205,6 +212,7 @@ class TracyPerformanceController:
         )
 
     def _trim_captures(self) -> None:
+        removed_reference = False
         while len(self._capture_order) > MAX_TRACY_CAPTURES:
             removed = self._capture_order.pop(0)
             self._captures.pop(removed, None)
@@ -212,8 +220,12 @@ class TracyPerformanceController:
                 self._selected_capture_id = ""
             if self._baseline_capture_id == removed:
                 self._baseline_capture_id = ""
+                removed_reference = True
             if self._comparison_capture_id == removed:
                 self._comparison_capture_id = ""
+                removed_reference = True
+        if removed_reference:
+            self._diff = {}
 
     def _fail_capture(self, handle: object, failure: object) -> None:
         if handle is not self._task_handle:
@@ -259,6 +271,7 @@ class TracyPerformanceController:
         base = self._captures.get(self._baseline_capture_id)
         new = self._captures.get(self._comparison_capture_id)
         if base is None or new is None:
+            self._diff = {}
             if emit_error:
                 self._emit_result(False, "请先选择 Tracy 基线与复测记录")
             return False

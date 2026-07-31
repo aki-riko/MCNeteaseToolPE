@@ -363,12 +363,17 @@ def _capture_self_index(
 def _diff_rows(
     base_index: Mapping[str, float],
     new_index: Mapping[str, float],
-) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+) -> tuple[
+    list[dict[str, object]],
+    list[dict[str, object]],
+    list[dict[str, object]],
+    list[dict[str, object]],
+]:
     improved: list[dict[str, object]] = []
     regressed: list[dict[str, object]] = []
-    for name in base_index.keys() | new_index.keys():
-        before = base_index.get(name, 0.0)
-        after = new_index.get(name, 0.0)
+    for name in base_index.keys() & new_index.keys():
+        before = base_index[name]
+        after = new_index[name]
         delta = after - before
         if delta == 0:
             continue
@@ -380,9 +385,30 @@ def _diff_rows(
             "percent": round(delta / before * 100.0, 2) if before else None,
         }
         (improved if delta < 0 else regressed).append(item)
+    added = [
+        _presence_diff_row(name, 0.0, new_index[name])
+        for name in new_index.keys() - base_index.keys()
+    ]
+    removed = [
+        _presence_diff_row(name, base_index[name], 0.0)
+        for name in base_index.keys() - new_index.keys()
+    ]
     improved.sort(key=lambda item: (float(item["deltaMs"]), str(item["name"])))
     regressed.sort(key=lambda item: (-float(item["deltaMs"]), str(item["name"])))
-    return improved, regressed
+    added.sort(key=lambda item: (-float(item["newMs"]), str(item["name"])))
+    removed.sort(key=lambda item: (-float(item["baseMs"]), str(item["name"])))
+    return improved, regressed, added, removed
+
+
+def _presence_diff_row(name: str, before: float, after: float) -> dict[str, object]:
+    delta = after - before
+    return {
+        "name": name,
+        "baseMs": round(before, 3),
+        "newMs": round(after, 3),
+        "deltaMs": round(delta, 3),
+        "percent": round(delta / before * 100.0, 2) if before else None,
+    }
 
 
 def diff_tracy_captures(
@@ -397,7 +423,7 @@ def diff_tracy_captures(
         raise TracyAnalysisError("基线与复测采样时长不同，不能直接比较")
     base_index = _capture_self_index(base, name_contains)
     new_index = _capture_self_index(new, name_contains)
-    improved, regressed = _diff_rows(base_index, new_index)
+    improved, regressed, added, removed = _diff_rows(base_index, new_index)
     base_total = sum(base_index.values())
     new_total = sum(new_index.values())
     delta_total = new_total - base_total
@@ -414,6 +440,8 @@ def diff_tracy_captures(
         },
         "improved": improved[:bounded],
         "regressed": regressed[:bounded],
+        "added": added[:bounded],
+        "removed": removed[:bounded],
     }
 
 

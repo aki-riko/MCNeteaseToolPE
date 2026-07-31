@@ -168,7 +168,7 @@ def test_diff_reports_improvements_and_regressions() -> None:
     assert result["regressed"][0]["deltaMs"] == 2.0
 
 
-def test_diff_includes_added_and_removed_functions() -> None:
+def test_diff_separates_added_and_removed_functions() -> None:
     result = diff_tracy_captures(
         {
             "captureId": "base",
@@ -183,10 +183,12 @@ def test_diff_includes_added_and_removed_functions() -> None:
     )
 
     assert result["summary"]["deltaMs"] == 2.0
-    assert result["improved"][0]["name"] == "removed"
-    assert result["improved"][0]["newMs"] == 0.0
-    assert result["regressed"][0]["name"] == "added"
-    assert result["regressed"][0]["baseMs"] == 0.0
+    assert result["improved"] == []
+    assert result["regressed"] == []
+    assert result["removed"][0]["name"] == "removed"
+    assert result["removed"][0]["newMs"] == 0.0
+    assert result["added"][0]["name"] == "added"
+    assert result["added"][0]["baseMs"] == 0.0
 
 
 def test_diff_uses_complete_rows_beyond_display_limit() -> None:
