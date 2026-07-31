@@ -17,25 +17,31 @@ class AirPerfGraphicsAccumulator:
     def __init__(self) -> None:
         self._frames: list[dict[str, float | bool]] = []
         self._buckets: dict[int, dict[str, object]] = {}
-        self._total_jank = 0
-        self._total_big_jank = 0
 
     def feed(self, raw_frames: list[dict[str, object]]) -> dict[str, float]:
+        samples = self.feed_all(raw_frames)
+        return samples[-1] if samples else {}
+
+    def feed_all(self, raw_frames: list[dict[str, object]]) -> list[dict[str, float]]:
+        """逐项返回官方适配器产生的全部已完成秒桶。"""
+
         for raw_frame in raw_frames:
             self._append_frame(raw_frame)
         completed = self._complete_buckets()
         self._frames = self._frames[-5:]
-        if not completed:
-            return {}
-        latest = completed[-1]
-        frame_infos = latest["FrameInfos"]
+        return [self._bucket_sample(bucket) for bucket in completed]
+
+    @staticmethod
+    def _bucket_sample(bucket: Mapping[str, object]) -> dict[str, float]:
+        frame_infos = bucket["FrameInfos"]
+        assert isinstance(frame_infos, list)
         frame_times = [float(item["frameTime"]) for item in frame_infos]
         return {
-            "frameAverageFps": float(latest["FPS"]),
-            "frameDrawCalls": float(latest["DrawCalls"]),
-            "frameTriangleCount": float(latest["Trangles"]),
-            "frameJankCount": float(self._total_jank),
-            "frameBigJankCount": float(self._total_big_jank),
+            "frameAverageFps": float(bucket["FPS"]),
+            "frameDrawCalls": float(bucket["DrawCalls"]),
+            "frameTriangleCount": float(bucket["Trangles"]),
+            "frameJankCount": float(bucket["JankCount"]),
+            "frameBigJankCount": float(bucket["BigJankCount"]),
             "frameTimeMaxMs": max(frame_times, default=0.0) / 1_000_000.0,
         }
 
@@ -116,8 +122,6 @@ class AirPerfGraphicsAccumulator:
         for rounded_time in sorted(self._buckets)[:-1]:
             bucket = self._buckets.pop(rounded_time)
             self._finalize_bucket(bucket)
-            self._total_jank += int(bucket["JankCount"])
-            self._total_big_jank += int(bucket["BigJankCount"])
             bucket.pop("Frames", None)
             completed.append(bucket)
         return completed

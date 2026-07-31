@@ -54,6 +54,7 @@ class _MetricStats:
         average = self.total / self.count if self.count else 0.0
         return {
             "count": self.count,
+            "sum": round(self.total, 3),
             "average": round(average, 3),
             "minimum": round(self.minimum if self.count else 0.0, 3),
             "maximum": round(self.maximum if self.count else 0.0, 3),
@@ -148,11 +149,16 @@ class AirPerfSession:
         self._active_specs: list[_CounterSpec] = []
         self._graphics = AirPerfGraphicsAccumulator()
         self._graphics_active = False
+        self._graphics_samples: tuple[dict[str, float], ...] = ()
         self._warnings: list[str] = []
 
     @property
     def warnings(self) -> tuple[str, ...]:
         return tuple(self._warnings)
+
+    @property
+    def graphics_samples(self) -> tuple[dict[str, float], ...]:
+        return self._graphics_samples
 
     def open(self) -> None:
         architecture = self._architecture_provider(self._pid)
@@ -256,6 +262,7 @@ class AirPerfSession:
     def sample(self) -> dict[str, float]:
         if self._protocol is None:
             raise AirPerfProtocolError("aphost 会话尚未建立")
+        self._graphics_samples = ()
         sample: dict[str, float] = {}
         for spec in self._active_specs:
             value = self._protocol.get_data(spec.category, spec.counter, spec.instance)
@@ -263,7 +270,12 @@ class AirPerfSession:
                 sample[spec.key] = round(float(value) / spec.divisor, 4)
         if self._graphics_active:
             try:
-                sample.update(self._graphics.feed(self._protocol.get_directx_data(self._pid)))
+                frame_samples = self._graphics.feed_all(
+                    self._protocol.get_directx_data(self._pid)
+                )
+                self._graphics_samples = tuple(frame_samples)
+                if frame_samples:
+                    sample.update(frame_samples[-1])
             except (AirPerfProtocolError, OSError, TimeoutError) as error:
                 self._graphics_active = False
                 message = f"DirectX：{error}"
@@ -382,7 +394,11 @@ class AirPerfMonitor:
             while not stop_event.wait(self._interval_seconds):
                 sample = session.sample()  # type: ignore[attr-defined]
                 self._sync_session_warnings(session)
-                self._record(sample)
+                raw_frame_samples = getattr(session, "graphics_samples", ())
+                frame_samples = [
+                    item for item in raw_frame_samples if isinstance(item, Mapping)
+                ]
+                self._record(sample, frame_samples)
         except (AirPerfProtocolError, OSError, ProcessLookupError, TimeoutError, ValueError) as error:
             LOGGER.warning("AirPerf 持续采集结束：%s", error)
             self._finish("failed", f"AirPerf 兼容采集不可用：{error}")
@@ -408,12 +424,23 @@ class AirPerfMonitor:
                 self._message = "AirPerf 其余指标采集中；" + "；".join(warnings)
         self._changed()
 
-    def _record(self, sample: dict[str, float]) -> None:
+    def _record(
+        self,
+        sample: dict[str, float],
+        frame_samples: list[Mapping[str, object]] | None = None,
+    ) -> None:
+        completed_frames = frame_samples or []
         with self._lock:
             self._latest = dict(sample)
             self._sample_count += 1
             for key, value in sample.items():
+                if completed_frames and key.startswith("frame"):
+                    continue
                 self._stats.setdefault(key, _MetricStats()).add(float(value))
+            for frame_sample in completed_frames:
+                for key, value in frame_sample.items():
+                    if isinstance(value, (int, float)):
+                        self._stats.setdefault(key, _MetricStats()).add(float(value))
         self._changed()
 
     def _sync_session_warnings(self, session: object) -> None:
@@ -446,8 +473,8 @@ REPORT_METRIC_DEFINITIONS = (
     ("frameAverageFps", "average", "平均 FPS", "{:.1f}"),
     ("frameDrawCalls", "average", "平均 DrawCall", "{:.1f}"),
     ("frameTriangleCount", "average", "平均三角面", "{:.0f}"),
-    ("frameJankCount", "maximum", "卡顿数", "{:.0f}"),
-    ("frameBigJankCount", "maximum", "严重卡顿数", "{:.0f}"),
+    ("frameJankCount", "sum", "卡顿数", "{:.0f}"),
+    ("frameBigJankCount", "sum", "严重卡顿数", "{:.0f}"),
     ("frameTimeMaxMs", "maximum", "帧耗时峰值", "{:.2f} ms"),
 )
 

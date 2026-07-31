@@ -144,6 +144,17 @@ def test_protocol_decodes_verified_method_name_and_arity_format() -> None:
     assert protocol.get_methods("Profiler") == ["get_data", "get_counter", "Equals"]
 
 
+def test_protocol_decodes_verified_screenshot_handle_response_shape() -> None:
+    transport = _FakeTransport(b'{"isOk":true,"return":{"value":12345}}')
+    protocol = AirPerfProtocol(transport=transport)
+
+    assert protocol.get_process_handle(4242) == 12345
+    assert json.loads(transport.requests[-1].decode("utf-8")) == {
+        "cmd": "ScreenshotUtil___getHandleByProcessId",
+        "parameter": [4242],
+    }
+
+
 def test_graphics_accumulator_matches_official_second_bucket_formula() -> None:
     accumulator = AirPerfGraphicsAccumulator()
     timestamps = [
@@ -171,6 +182,23 @@ def test_graphics_accumulator_matches_official_second_bucket_formula() -> None:
     assert sample["frameJankCount"] == 0.0
     assert sample["frameBigJankCount"] == 1.0
     assert sample["frameTimeMaxMs"] == 150.0
+
+
+def test_graphics_accumulator_preserves_every_completed_second_bucket() -> None:
+    accumulator = AirPerfGraphicsAccumulator()
+    raw_frames = [
+        {"timestamp": 1_800_000_000, "drawCallCount": 10, "trangleCount": 100},
+        {"timestamp": 1_900_000_000, "drawCallCount": 20, "trangleCount": 200},
+        {"timestamp": 2_000_000_000, "drawCallCount": 30, "trangleCount": 300},
+        {"timestamp": 2_050_000_000, "drawCallCount": 40, "trangleCount": 400},
+        {"timestamp": 2_100_000_000, "drawCallCount": 50, "trangleCount": 500},
+        {"timestamp": 3_000_000_000, "drawCallCount": 60, "trangleCount": 600},
+    ]
+
+    samples = accumulator.feed_all(raw_frames)
+
+    assert [sample["frameAverageFps"] for sample in samples] == [10.0, 15.0]
+    assert [sample["frameDrawCalls"] for sample in samples] == [10.0, 10.0]
 
 
 def _build_carchive(path: Path, files: dict[str, bytes]) -> None:
@@ -295,6 +323,27 @@ def test_monitor_collects_constant_space_summary_until_manual_stop() -> None:
     assert state["summary"]["systemCpuPercent"]["maximum"] >= 20
     assert any(item["label"] == "AirPerf GPU 峰值" for item in state["metrics"])
     assert changes
+
+
+def test_monitor_records_every_graphics_bucket_without_duplicating_system_sample() -> None:
+    monitor = AirPerfMonitor(lambda: None, _FakeSession)
+
+    monitor._record(
+        {"systemCpuPercent": 30.0, "frameAverageFps": 20.0},
+        [
+            {"frameAverageFps": 10.0, "frameJankCount": 1.0},
+            {"frameAverageFps": 20.0, "frameJankCount": 2.0},
+        ],
+    )
+
+    summary = monitor.state["summary"]
+    assert summary["systemCpuPercent"]["count"] == 1
+    assert summary["frameAverageFps"]["count"] == 2
+    assert summary["frameAverageFps"]["average"] == 15.0
+    assert summary["frameJankCount"]["sum"] == 3.0
+    assert {item["label"]: item["value"] for item in monitor.state["metrics"]}[
+        "AirPerf 卡顿数"
+    ] == "3"
 
 
 def test_report_metrics_skip_unavailable_indicators() -> None:

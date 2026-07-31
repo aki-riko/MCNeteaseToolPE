@@ -361,10 +361,14 @@ class AirPerfProtocol:
         return [dict(item) for item in result if isinstance(item, dict)]
 
     def get_process_handle(self, pid: int) -> int:
-        return int(self.call("ScreenshotUtil", "getHandleByProcessId", [int(pid)]))
+        result = self.call("ScreenshotUtil", "getHandleByProcessId", [int(pid)])
+        if not isinstance(result, dict):
+            return -1
+        value = result.get("value", -1)
+        return int(value) if isinstance(value, (int, float)) else -1
 
-    def capture_screen(self, handle: int) -> str:
-        return str(self.call("ScreenshotUtil", "CaptureScreen", [int(handle)]))
+    def capture_screen(self, handle: int) -> object:
+        return self.call("ScreenshotUtil", "CaptureScreen", [int(handle)])
 
     def get_counter(self, category: str) -> dict[str, object]:
         result = self.call("Profiler", "get_counter", [category])
