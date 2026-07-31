@@ -160,7 +160,7 @@ class PerformanceBackend(QObject):
         except OSError as error:
             LOGGER.exception("枚举 Minecraft 进程失败")
             self._emit_result(False, f"枚举 Minecraft 进程失败：{error}")
-            processes = []
+            return
         self._processes = list(processes)
         available_pids = {item.pid for item in self._processes}
         self._reconcile_selected_process(available_pids)
@@ -169,7 +169,7 @@ class PerformanceBackend(QObject):
         if self._selected_pid in available_pids:
             return
         if self._monitoring:
-            self._stop_monitoring("目标进程已退出，监测已停止")
+            self._stop_monitoring("目标进程已退出，监测已停止", success=False)
         self._selected_pid = self._processes[0].pid if self._processes else 0
         self._last_sample = None
 
@@ -206,14 +206,14 @@ class PerformanceBackend(QObject):
     def stopMonitoring(self) -> None:
         self._stop_monitoring("监测已停止")
 
-    def _stop_monitoring(self, message: str) -> None:
+    def _stop_monitoring(self, message: str, *, success: bool = True) -> None:
         self._timer.stop()
         changed = self._monitoring
         self._monitoring = False
         if changed:
             self.stateChanged.emit()
         if message:
-            self._emit_result(True, message)
+            self._emit_result(success, message)
 
     @Slot()
     def clearHistory(self) -> None:
@@ -229,7 +229,7 @@ class PerformanceBackend(QObject):
             sample = self._sampler.sample(self._selected_pid)
         except (OSError, ProcessLookupError) as error:
             LOGGER.warning("采样进程 PID %s 失败：%s", self._selected_pid, error)
-            self._stop_monitoring(f"目标进程不可用：{error}")
+            self._stop_monitoring(f"目标进程不可用：{error}", success=False)
             self._refresh_processes()
             self.stateChanged.emit()
             return

@@ -56,14 +56,20 @@ class _FakeSampler:
         self.processes = [ProcessDescriptor(42, "Minecraft.Windows.exe")]
         self.samples: list[ProcessSample] = [ProcessSample(42, 12.5, 640.0, 700.0)]
         self.reset_calls: list[int] = []
+        self.list_error: OSError | None = None
+        self.sample_error: OSError | None = None
 
     def list_candidates(self) -> list[ProcessDescriptor]:
+        if self.list_error is not None:
+            raise self.list_error
         return list(self.processes)
 
     def reset(self, pid: int) -> None:
         self.reset_calls.append(pid)
 
     def sample(self, _pid: int) -> ProcessSample:
+        if self.sample_error is not None:
+            raise self.sample_error
         if self.samples:
             return self.samples.pop(0)
         return ProcessSample(42, 25.0, 650.0, 710.0)
@@ -99,10 +105,61 @@ def test_mcstudio_root_override_and_tool_discovery(tmp_path: Path) -> None:
     }
 
     candidates = mcstudio_root_candidates(environment)
-    discovery = PerformanceToolLocator(lambda: candidates).discover()
+    discovery = PerformanceToolLocator(environment=environment).discover()
 
     assert candidates[0] == root
     assert discovery["root"] == str(root)
+    assert discovery["tools"]["tracy"]["available"] is True
+    assert discovery["tools"]["airperf"]["available"] is True
+    assert discovery["configured"] is True
+
+
+def test_mcstudio_candidates_use_only_injected_path(monkeypatch, tmp_path: Path) -> None:
+    injected_path = str(tmp_path / "isolated-bin")
+    calls: list[tuple[str, str]] = []
+
+    def fake_which(command: str, *, path: str) -> None:
+        calls.append((command, path))
+        return None
+
+    monkeypatch.setattr("src.performance_monitor.shutil.which", fake_which)
+
+    mcstudio_root_candidates({"PATH": injected_path})
+
+    assert calls == [("MCStudio.exe", injected_path)]
+
+
+def test_explicit_mcstudio_root_is_authoritative_when_incomplete(tmp_path: Path) -> None:
+    configured_root = tmp_path / "configured"
+    configured_root.mkdir()
+    complete_root = tmp_path / "Program Files x86" / "Netease" / "MCStudio"
+    _create_tool_tree(complete_root)
+    environment = {
+        MCSTUDIO_ROOT_ENV: str(configured_root),
+        "PATH": "",
+        "PROGRAMFILES(X86)": str(tmp_path / "Program Files x86"),
+    }
+
+    discovery = PerformanceToolLocator(environment=environment).discover()
+
+    assert discovery["root"] == str(configured_root)
+    assert discovery["configured"] is True
+    assert discovery["tools"]["tracy"]["available"] is False
+    assert discovery["tools"]["airperf"]["available"] is False
+
+
+def test_auto_discovery_prefers_candidate_with_all_tools(tmp_path: Path) -> None:
+    incomplete_root = tmp_path / "incomplete"
+    incomplete_root.mkdir()
+    complete_root = tmp_path / "complete"
+    _create_tool_tree(complete_root)
+
+    discovery = PerformanceToolLocator(
+        lambda: [incomplete_root, complete_root],
+        environment={},
+    ).discover()
+
+    assert discovery["root"] == str(complete_root)
     assert discovery["tools"]["tracy"]["available"] is True
     assert discovery["tools"]["airperf"]["available"] is True
 
@@ -153,6 +210,128 @@ def test_backend_launches_only_discovered_official_tools(tmp_path: Path) -> None
         root / "airperf" / "airperf.exe",
     ]
     assert all(result["success"] is True for result in results)
+
+
+def test_backend_does_not_launch_missing_tool(tmp_path: Path) -> None:
+    _application()
+    launched: list[Path] = []
+    results: list[dict[str, object]] = []
+    backend = PerformanceBackend(
+        locator=_FakeLocator(tmp_path, available=False),
+        sampler=_FakeSampler(),
+        launcher=lambda path: launched.append(path) is None,
+    )
+    backend.result.connect(results.append)
+
+    backend.refresh()
+    backend.launchTracy()
+
+    assert launched == []
+    assert results[-1]["success"] is False
+    assert "未找到" in str(results[-1]["message"])
+
+
+def test_backend_reports_launcher_false_and_oserror(tmp_path: Path) -> None:
+    _application()
+    root = tmp_path / "MCStudio"
+    _create_tool_tree(root)
+    results: list[dict[str, object]] = []
+    backend = PerformanceBackend(
+        locator=_FakeLocator(root),
+        sampler=_FakeSampler(),
+        launcher=lambda _path: False,
+    )
+    backend.result.connect(results.append)
+    backend.refresh()
+
+    backend.launchTracy()
+    assert results[-1]["success"] is False
+    assert results[-1]["message"] == "启动 方块探针（Tracy） 失败"
+
+    def raise_launch_error(_path: Path) -> bool:
+        raise OSError("拒绝访问")
+
+    backend._launcher = raise_launch_error
+    backend.launchAirPerf()
+    assert results[-1]["success"] is False
+    assert "拒绝访问" in str(results[-1]["message"])
+
+
+def test_backend_requires_a_selected_process_before_monitoring(tmp_path: Path) -> None:
+    _application()
+    sampler = _FakeSampler()
+    sampler.processes = []
+    results: list[dict[str, object]] = []
+    backend = PerformanceBackend(locator=_FakeLocator(tmp_path), sampler=sampler)
+    backend.result.connect(results.append)
+
+    backend.refresh()
+    backend.startMonitoring()
+
+    assert backend.state["monitoring"] is False
+    assert backend._timer.isActive() is False
+    assert results[-1]["success"] is False
+    assert "请先启动并选择" in str(results[-1]["message"])
+
+
+def test_sampling_process_exit_stops_timer_and_refreshes_processes(tmp_path: Path) -> None:
+    _application()
+    sampler = _FakeSampler()
+    sampler.sample_error = ProcessLookupError("进程已退出")
+    results: list[dict[str, object]] = []
+    backend = PerformanceBackend(locator=_FakeLocator(tmp_path), sampler=sampler)
+    backend.result.connect(results.append)
+    backend.refresh()
+    sampler.processes = []
+
+    backend.startMonitoring()
+
+    assert backend.state["monitoring"] is False
+    assert backend.state["selectedPid"] == 0
+    assert backend.state["processes"] == []
+    assert backend._timer.isActive() is False
+    assert results[-1]["success"] is False
+    assert "目标进程不可用" in str(results[-1]["message"])
+
+
+def test_refresh_process_exit_stops_monitoring_as_failure(tmp_path: Path) -> None:
+    _application()
+    sampler = _FakeSampler()
+    results: list[dict[str, object]] = []
+    backend = PerformanceBackend(locator=_FakeLocator(tmp_path), sampler=sampler)
+    backend.result.connect(results.append)
+    backend.refresh()
+    backend.startMonitoring()
+    sampler.processes = []
+
+    backend.refresh()
+
+    assert backend.state["monitoring"] is False
+    assert backend.state["selectedPid"] == 0
+    assert backend._timer.isActive() is False
+    assert results[-1]["success"] is False
+    assert "目标进程已退出" in str(results[-1]["message"])
+
+
+def test_refresh_enumeration_error_preserves_active_target(tmp_path: Path) -> None:
+    _application()
+    sampler = _FakeSampler()
+    results: list[dict[str, object]] = []
+    backend = PerformanceBackend(locator=_FakeLocator(tmp_path), sampler=sampler)
+    backend.result.connect(results.append)
+    backend.refresh()
+    backend.startMonitoring()
+    sampler.list_error = OSError("快照失败")
+
+    backend.refresh()
+    state = backend.state
+    backend.stopMonitoring()
+
+    assert state["monitoring"] is True
+    assert state["selectedPid"] == 42
+    assert len(state["processes"]) == 1
+    assert results[-2]["success"] is False
+    assert "快照失败" in str(results[-2]["message"])
 
 
 def test_profile_snippets_use_only_documented_modapi_and_copy(tmp_path: Path) -> None:

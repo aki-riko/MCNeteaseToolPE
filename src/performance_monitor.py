@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import time
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Mapping
 
 
 MCSTUDIO_ROOT_ENV = "MCNETEASE_MCSTUDIO_ROOT"
@@ -63,7 +63,7 @@ def is_minecraft_process(name: str) -> bool:
 
 
 def mcstudio_root_candidates(
-    environment: dict[str, str] | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> list[Path]:
     """按显式配置、PATH、系统程序目录的顺序给出候选安装目录。"""
 
@@ -73,7 +73,12 @@ def mcstudio_root_candidates(
     if configured:
         candidates.append(Path(configured).expanduser())
 
-    executable = shutil.which("MCStudio.exe")
+    path_value = env.get("PATH", "")
+    executable = (
+        shutil.which("MCStudio.exe", path=path_value)
+        if path_value.strip()
+        else None
+    )
     if executable:
         candidates.append(Path(executable).resolve().parent)
 
@@ -102,18 +107,40 @@ class PerformanceToolLocator:
     def __init__(
         self,
         candidate_provider: Callable[[], list[Path]] | None = None,
+        environment: Mapping[str, str] | None = None,
     ) -> None:
-        self._candidate_provider = candidate_provider or mcstudio_root_candidates
+        self._environment = environment if environment is not None else os.environ
+        self._candidate_provider = candidate_provider or (
+            lambda: mcstudio_root_candidates(self._environment)
+        )
 
     def discover(self) -> dict[str, object]:
-        candidates = self._candidate_provider()
-        root = next((path for path in candidates if path.is_dir()), None)
+        configured_path = self._environment.get(MCSTUDIO_ROOT_ENV, "").strip()
+        root = (
+            Path(configured_path).expanduser()
+            if configured_path
+            else self._select_auto_root(self._candidate_provider())
+        )
         tools = self._tool_paths(root)
         return {
             "root": str(root) if root else "",
-            "configured": bool(os.environ.get(MCSTUDIO_ROOT_ENV, "").strip()),
+            "configured": bool(configured_path),
             "tools": tools,
         }
+
+    @classmethod
+    def _select_auto_root(cls, candidates: Iterable[Path]) -> Path | None:
+        existing = [path for path in candidates if path.is_dir()]
+        if not existing:
+            return None
+        return max(existing, key=cls._available_tool_count)
+
+    @staticmethod
+    def _available_tool_count(root: Path) -> int:
+        return sum(
+            (root / relative_path).is_file()
+            for relative_path in TOOL_RELATIVE_PATHS.values()
+        )
 
     @staticmethod
     def _tool_paths(root: Path | None) -> dict[str, dict[str, object]]:
