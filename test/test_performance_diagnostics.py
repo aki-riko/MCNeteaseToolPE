@@ -464,6 +464,33 @@ def test_auto_monitoring_delays_professional_collectors_until_target_is_stable(
     assert scheduled == [(10, "", 25)]
 
 
+def test_auto_monitoring_discovers_airperf_without_opening_performance_page(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """回归真实世界：未打开性能页时也必须自动定位并启动 aphost。"""
+
+    _application()
+    handle = _FakeTaskHandle()
+    airperf = _FakeAirPerfMonitor()
+    monkeypatch.setattr(
+        "prismqml.run_in_pool", lambda _operation, *_arguments: handle
+    )
+    backend = PerformanceBackend(
+        locator=_FakeLocator(tmp_path),
+        sampler=_FakeSampler(),
+        tracy_probe=_reachable_tracy_probe,
+        tracy_capture_runner=lambda _seconds, _filter, _top: {},
+        airperf_monitor=airperf,
+        automatic_stability_ms=0,
+    )
+
+    backend.refreshPerformanceTarget()
+
+    assert backend.state["mcStudioRoot"] == str(tmp_path)
+    assert backend.state["unifiedMonitoring"] is True
+    assert airperf.start_calls == [(tmp_path, 42, "Minecraft.Windows.exe")]
+
+
 def test_auto_monitoring_restarts_stability_window_after_tracy_disconnect(
     monkeypatch, tmp_path: Path
 ) -> None:
