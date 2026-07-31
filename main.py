@@ -5,7 +5,7 @@
 
 """Application entry. 应用入口。
 
-装配窗口与五个页面(工程处理 / NBT / 缓存清理 / MCP / 设置),
+装配窗口与六个页面(工程处理 / NBT / 性能诊断 / 缓存清理 / MCP / 设置),
 复用 PrismQML 的 Bar 窗口与导航。
 """
 
@@ -44,6 +44,7 @@ from src.minecraft_cleanup_qt_backend import MinecraftCleanupBackend
 from src.level_dat_backend import LevelDatBackend
 from src.mcp_server import MCP_SERVER_FLAG
 from src.mcp_server_backend import McpServerBackend
+from src.performance_backend import PerformanceBackend
 from src.settings_backend import ApplicationSettingsBackend
 
 # 窗口尺寸；版本与更新配置集中在 src/config.py，可由环境变量覆盖。
@@ -240,6 +241,7 @@ def main() -> int:
     settings_backend = ApplicationSettingsBackend()
     project_backend = ProjectBackend(settings_backend=settings_backend)
     level_dat_backend = LevelDatBackend(settings_backend=settings_backend)
+    performance_backend = PerformanceBackend()
     minecraft_cleanup_backend = MinecraftCleanupBackend()
     mcp_server_backend = McpServerBackend()
     project_backend.auditBackend.finished.connect(_notify_audit_finished)
@@ -253,6 +255,12 @@ def main() -> int:
         _page_factory("LevelDatPage.qml", level_dat_backend),
         "DocumentData",
         "NBT",
+        position="top",
+    )
+    win.addPage(
+        _page_factory("PerformancePage.qml", performance_backend),
+        "PulseSquare",
+        "性能诊断",
         position="top",
     )
     win.addPage(

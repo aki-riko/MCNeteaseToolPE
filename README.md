@@ -37,6 +37,9 @@ MCNeteaseToolPE 面向网易 MC 中国版的地图与组件开发者,在提交�
   同级 `db` 的当前有效 `scriptData/ExtraData`，可直接校验和编辑地图、撤离点、拉闸方块、
   闸门控制台等 JSON。保存必须在世界关闭时执行；工具会先完整备份 `db` 目录，校验
   LevelDB sequence 与内容指纹，再追加 WAL 并重读验证，失败时自动回滚。
+- **📈 性能诊断**：自动发现 MCStudio 自带的 Tracy 与 AirPerf，按需启动官方工具；
+  无额外依赖地监测 ModPC/Minecraft 进程的 CPU、当前工作集和峰值工作集，并绘制最近
+  120 秒曲线。页面还提供网易公开的服务端 CPU/内存火焰图 ModAPI 示例与当前公开性能标准。
 
 ## 🚀 基于 PrismQML 引擎
 
@@ -81,6 +84,26 @@ Minecraft 数据目录。
 只读与修改操作分别携带 MCP `ToolAnnotations`；所有写操作仍要求 `confirm=true`。
 默认监听配置可通过 `MCNETEASE_MCP_HOST`、`MCNETEASE_MCP_PORT` 和
 `MCNETEASE_MCP_PATH` 环境变量覆盖，其中主机值仍必须是回环地址。
+
+## 📈 性能诊断
+
+“性能诊断”页面只桥接本机已经安装的官方性能工具，不复制或重新分发 MCStudio 文件。
+程序按显式环境变量、`PATH`、Windows 程序目录的顺序查找 MCStudio；非标准安装位置可用
+`MCNETEASE_MCSTUDIO_ROOT` 指定，例如：
+
+```powershell
+$env:MCNETEASE_MCSTUDIO_ROOT = "MCSTUDIO_ROOT"
+& ".\.venv\Scripts\python.exe" main.py
+```
+
+本地曲线通过 Windows API 读取目标进程 CPU 与工作集，不需要安装 `psutil`。CPU/内存
+火焰图按钮复制网易公开的 `StartProfile`/`StopProfile` 与
+`StartMemProfile`/`StopMemProfile` 调试脚本，生成的 SVG 位于 ModPC 目录；提审前必须
+移除项目中的诊断调用。
+
+网易公开的达标线为加载时长 `<120s`、内存峰值 `<450MB`、平均帧率 `>40`，但没有公开
+手机集群的测试场景、采样窗口、FPS 数据源与卡顿阈值。本页的 Win PC 进程数据用于观察
+变化趋势，不冒充官方机审结果，也不会用 PC 工作集直接判定组件是否达标。
 
 ## 🛠️ Python 开发运行
 
