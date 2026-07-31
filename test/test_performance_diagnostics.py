@@ -78,6 +78,14 @@ class _FakeTaskHandle(QObject):
     failed = Signal(object)
 
 
+class _FakeClock:
+    def __init__(self) -> None:
+        self.value = 0.0
+
+    def __call__(self) -> float:
+        return self.value
+
+
 class _FakeAirPerfMonitor:
     def __init__(self) -> None:
         self.start_calls: list[tuple[Path, int, str]] = []
@@ -375,6 +383,7 @@ def test_default_auto_monitoring_waits_for_new_process_after_manual_stop(
         sampler=sampler,
         tracy_probe=_reachable_tracy_probe,
         tracy_capture_runner=lambda _seconds, _filter, _top: {},
+        automatic_stability_ms=0,
     )
     backend.refresh()
     assert backend.state["autoMonitoring"] is True
@@ -405,6 +414,99 @@ def test_default_auto_monitoring_waits_for_new_process_after_manual_stop(
     assert backend.state["tracy"]["stopRequested"] is True
     handles[1].succeeded.emit(_tracy_capture_payload())
     assert backend.state["unifiedMonitoring"] is False
+
+
+def test_auto_monitoring_delays_professional_collectors_until_target_is_stable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """回归 05:51：MC/Tracy 刚出现时不得立即启动 aphost 或 Tracy 抓取。"""
+    _application()
+    handle = _FakeTaskHandle()
+    scheduled: list[tuple[object, ...]] = []
+    clock = _FakeClock()
+    airperf = _FakeAirPerfMonitor()
+
+    def fake_run_in_pool(_operation, *arguments):
+        scheduled.append(arguments)
+        return handle
+
+    monkeypatch.setattr("prismqml.run_in_pool", fake_run_in_pool)
+    sampler = _FakeSampler()
+    sampler.processes = []
+    backend = PerformanceBackend(
+        locator=_FakeLocator(tmp_path),
+        sampler=sampler,
+        tracy_probe=_reachable_tracy_probe,
+        tracy_capture_runner=lambda _seconds, _filter, _top: {},
+        airperf_monitor=airperf,
+        monotonic=clock,
+        automatic_stability_ms=20_000,
+    )
+    backend.refresh()
+
+    sampler.processes = [ProcessDescriptor(84, "ModPC.exe")]
+    backend.refreshPerformanceTarget()
+    assert backend.state["monitoring"] is False
+    assert backend.state["tracy"]["continuousActive"] is False
+    assert airperf.start_calls == []
+    assert scheduled == []
+
+    clock.value = 19.9
+    backend.refreshPerformanceTarget()
+    assert backend.state["tracy"]["continuousActive"] is False
+    assert airperf.start_calls == []
+    assert scheduled == []
+
+    clock.value = 20.0
+    backend.refreshPerformanceTarget()
+    assert backend.state["tracy"]["continuousActive"] is True
+    assert airperf.start_calls == [(tmp_path, 84, "ModPC.exe")]
+    assert scheduled == [(10, "", 25)]
+
+
+def test_auto_monitoring_restarts_stability_window_after_tracy_disconnect(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _application()
+    handle = _FakeTaskHandle()
+    scheduled: list[tuple[object, ...]] = []
+    clock = _FakeClock()
+    reachable = True
+
+    def tracy_probe() -> dict[str, object]:
+        return {**_reachable_tracy_probe(), "reachable": reachable}
+
+    def fake_run_in_pool(_operation, *arguments):
+        scheduled.append(arguments)
+        return handle
+
+    monkeypatch.setattr("prismqml.run_in_pool", fake_run_in_pool)
+    backend = PerformanceBackend(
+        locator=_FakeLocator(tmp_path),
+        sampler=_FakeSampler(),
+        tracy_probe=tracy_probe,
+        tracy_capture_runner=lambda _seconds, _filter, _top: {},
+        monotonic=clock,
+        automatic_stability_ms=20_000,
+    )
+    backend.refresh()
+    backend.refreshPerformanceTarget()
+
+    clock.value = 19.0
+    reachable = False
+    backend.refreshPerformanceTarget()
+    clock.value = 20.0
+    reachable = True
+    backend.refreshPerformanceTarget()
+    clock.value = 39.9
+    backend.refreshPerformanceTarget()
+    assert backend.state["unifiedMonitoring"] is False
+    assert scheduled == []
+
+    clock.value = 40.0
+    backend.refreshPerformanceTarget()
+    assert backend.state["unifiedMonitoring"] is True
+    assert scheduled == [(10, "", 25)]
 
 
 def test_backend_launches_only_discovered_official_tools(tmp_path: Path) -> None:

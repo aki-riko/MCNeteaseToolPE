@@ -8,12 +8,12 @@ import logging
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QObject, Property, QProcess, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 
 from .airperf_backend import AirPerfMonitor
-from .config import TRACY_PROBE_INTERVAL_MS
+from .config import PERFORMANCE_AUTO_STABILITY_MS, TRACY_PROBE_INTERVAL_MS
 from .performance_monitor import MCSTUDIO_ROOT_ENV, PerformanceToolLocator, ProcessDescriptor
-from .performance_monitor import ProcessSample, WindowsProcessSampler
+from .performance_monitor import ProcessSample
 from .performance_report import combine_session_metrics
 from .performance_snippets import (
     CPU_PROFILE_SNIPPET,
@@ -21,28 +21,19 @@ from .performance_snippets import (
     PROFILE_SNIPPETS,
     default_clipboard_setter,
 )
+from .performance_startup import (
+    AutomaticProfessionalStartGate,
+    create_default_sampler,
+    default_launcher,
+    empty_performance_discovery,
+    process_payload,
+)
 from .tracy_backend import MAX_TRACY_CAPTURES, TracyPerformanceController
 
 
 LOGGER = logging.getLogger(__name__)
 SAMPLE_INTERVAL_MS = 1000
 MAX_HISTORY_SAMPLES = 120
-
-def _default_launcher(executable: Path) -> bool:
-    launched, _pid = QProcess.startDetached(
-        str(executable),
-        [],
-        str(executable.parent),
-    )
-    return bool(launched)
-
-
-def _create_default_sampler() -> WindowsProcessSampler | None:
-    try:
-        return WindowsProcessSampler()
-    except OSError:
-        LOGGER.warning("当前系统不支持 Windows 进程性能采样", exc_info=True)
-        return None
 
 
 class PerformanceBackend(QObject):
@@ -63,9 +54,15 @@ class PerformanceBackend(QObject):
             Callable[[int, str, int], dict[str, object]] | None
         ) = None,
         airperf_monitor: object | None = None,
+        monotonic: Callable[[], float] | None = None,
+        automatic_stability_ms: int = PERFORMANCE_AUTO_STABILITY_MS,
     ) -> None:
         super().__init__(parent)
         self._initialize_state(locator, sampler, launcher, clipboard_setter)
+        self._auto_start_gate = AutomaticProfessionalStartGate(
+            automatic_stability_ms,
+            monotonic,
+        )
         self._initialize_monitors(tracy_probe, tracy_capture_runner, airperf_monitor)
 
     def _initialize_state(
@@ -76,10 +73,10 @@ class PerformanceBackend(QObject):
         clipboard_setter: Callable[[str], None] | None,
     ) -> None:
         self._locator = locator or PerformanceToolLocator()
-        self._sampler = sampler if sampler is not None else _create_default_sampler()
-        self._launcher = launcher or _default_launcher
+        self._sampler = sampler if sampler is not None else create_default_sampler()
+        self._launcher = launcher or default_launcher
         self._clipboard_setter = clipboard_setter or default_clipboard_setter
-        self._discovery = self._empty_discovery()
+        self._discovery = empty_performance_discovery()
         self._processes: list[ProcessDescriptor] = []
         self._selected_pid = 0
         self._monitoring = False
@@ -116,17 +113,6 @@ class PerformanceBackend(QObject):
         self._discovery_timer.timeout.connect(self.refreshPerformanceTarget)
         self._discovery_timer.start()
 
-    @staticmethod
-    def _empty_discovery() -> dict[str, object]:
-        return {
-            "root": "",
-            "configured": False,
-            "tools": {
-                "tracy": {"available": False, "path": ""},
-                "airperf": {"available": False, "path": ""},
-            },
-        }
-
     @Property("QVariantMap", notify=stateChanged)
     def state(self) -> dict[str, object]:
         sample = self._last_sample
@@ -137,7 +123,7 @@ class PerformanceBackend(QObject):
             "rootEnvironment": MCSTUDIO_ROOT_ENV,
             "tools": self._discovery.get("tools", {}),
             "samplerAvailable": self._sampler is not None,
-            "processes": [self._process_payload(item) for item in self._processes],
+            "processes": [process_payload(item) for item in self._processes],
             "selectedPid": self._selected_pid,
             "monitoring": self._monitoring,
             "unifiedMonitoring": (
@@ -146,6 +132,7 @@ class PerformanceBackend(QObject):
                 or bool(self._airperf.state.get("active"))
             ),
             "autoMonitoring": self._auto_monitoring,
+            "autoStartup": self._auto_start_gate.state,
             "cpuPercent": round(sample.cpu_percent, 1) if sample else 0.0,
             "workingSetMb": round(sample.working_set_mb, 1) if sample else 0.0,
             "peakWorkingSetMb": round(sample.peak_working_set_mb, 1) if sample else 0.0,
@@ -171,10 +158,6 @@ class PerformanceBackend(QObject):
             airperf_state=airperf_state,
         )
         return tracy_state
-
-    @staticmethod
-    def _process_payload(process: ProcessDescriptor) -> dict[str, object]:
-        return {"pid": process.pid, "name": process.name, "text": process.label}
 
     @Slot()
     def refresh(self) -> None:
@@ -213,6 +196,7 @@ class PerformanceBackend(QObject):
                 manual=False,
             )
         self._selected_pid = self._processes[0].pid if self._processes else 0
+        self._auto_start_gate.reset("selected_process_changed")
         if self._auto_blocked_pid not in available_pids:
             self._auto_blocked_pid = 0
         self._last_sample = None
@@ -293,6 +277,7 @@ class PerformanceBackend(QObject):
         success: bool = True,
         manual: bool,
     ) -> None:
+        self._auto_start_gate.reset("monitoring_stopped")
         if manual and self._selected_pid:
             self._auto_blocked_pid = self._selected_pid
         self._stop_monitoring("")
@@ -409,22 +394,39 @@ class PerformanceBackend(QObject):
 
     def _start_automatic_monitoring_if_ready(self) -> None:
         if not self._auto_monitoring:
+            self._auto_start_gate.reset("automatic_monitoring_disabled")
             return
         available_pids = {item.pid for item in self._processes}
         if self._auto_blocked_pid:
             if self._auto_blocked_pid in available_pids:
+                self._auto_start_gate.reset("manual_stop_blocked")
                 return
             self._auto_blocked_pid = 0
-        if (
-            not self._selected_pid
-            or self._monitoring
-            or self._tracy.continuous_active
-            or self._airperf.state.get("active")
-        ):
+        if not self._selected_pid:
+            self._auto_start_gate.reset("target_missing")
+            return
+        if self._tracy.continuous_active or self._airperf.state.get("active"):
             return
         tracy_state = self._tracy.state
-        if tracy_state.get("binAvailable") and tracy_state.get("reachable"):
-            self._start_unified_monitoring(automatic=True)
+        target = next(
+            (item for item in self._processes if item.pid == self._selected_pid),
+            None,
+        )
+        if target is None:
+            self._auto_start_gate.reset("selected_target_missing")
+            return
+        tracy_ready = bool(
+            tracy_state.get("binAvailable") and tracy_state.get("reachable")
+        )
+        professional_ready = self._auto_start_gate.observe(
+            target.pid,
+            target.name,
+            tracy_ready,
+        )
+        if not professional_ready:
+            return
+        if self._start_unified_monitoring(automatic=True):
+            self._auto_start_gate.mark_started(bool(self._airperf.state.get("active")))
 
     @Slot(int, str, str)
     def captureTracy(self, seconds: int, name_contains: str, label: str) -> None:

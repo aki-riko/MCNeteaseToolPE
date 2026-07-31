@@ -113,7 +113,9 @@ AirPerf RPC 通过客户端随附的 `libzmq` C ABI 通信，不需要安装 `py
 Tracy v0.11.1 `tracy-capture` 与 `tracy-csvexport`。默认端点来自配置，可用
 `MCNETEASE_TRACY_HOST` 和 `MCNETEASE_TRACY_PORT` 覆盖；主机仅接受回环地址。CLI 目录可用
 `MCNETEASE_TRACY_BIN_DIR` 覆盖，也兼容上游的 `TRACY_BIN_DIR`。界面只保留一个主按钮；开始后
-连续抓取窗口，直到手动停止或检测到游戏退出，再统一归约整段会话。
+自动模式会先等待同一游戏进程与 Tracy 连续稳定 20 秒，再统一启动进程 CPU/内存、Tracy 与
+AirPerf 专业采集；稳定期可用 `MCNETEASE_PERFORMANCE_AUTO_STABILITY_MS`
+覆盖。之后连续抓取窗口，直到手动停止或检测到游戏退出，再统一归约整段会话。
 采集时应持续触发真实玩法负载，
 基线与复测必须使用同一设备、同一场景和相同时长；页面显示的是采样窗口内 Tracy
 `Frames / seconds` 对应的 FrameMark 频率，不等于 DirectX FPS，也不等于网易手机集群 p1/p5
