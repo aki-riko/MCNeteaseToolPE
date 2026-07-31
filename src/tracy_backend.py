@@ -87,6 +87,7 @@ class TracyPerformanceController:
             "continuousActive": self._continuous_active,
             "stopRequested": self._stop_requested,
             "windowsCompleted": int(self._session_summary.get("windows", 0)),
+            "sessionSeconds": int(self._session_summary.get("seconds", 0)),
             "captures": self._capture_summaries(),
             "selectedCaptureId": self._selected_capture_id,
             "baselineCaptureId": self._baseline_capture_id,
@@ -335,7 +336,7 @@ class TracyPerformanceController:
         self._emit_result(
             True,
             f"{('首次检测' if label == 'before' else '对比检测')}完成："
-            f"{frames if frames is not None else '?'} 帧，"
+            f"{frames if frames is not None else '?'} 个 FrameMark，"
             f"{zones if zones is not None else '?'} 个区间",
         )
 
@@ -453,7 +454,11 @@ class TracyPerformanceController:
             SESSION_CAPTURE_LABEL: "持续",
         }.get(str(capture.get("label", "")), "采样")
         fps = capture.get("averageFps")
-        fps_text = f" · {float(fps):.1f} FPS" if isinstance(fps, (int, float)) else ""
+        fps_text = (
+            f" · {float(fps):.1f} FrameMark/s"
+            if isinstance(fps, (int, float))
+            else ""
+        )
         return {
             "id": capture_id,
             "text": f"{label} {capture_id} · {capture.get('seconds', 0)}s{fps_text}",

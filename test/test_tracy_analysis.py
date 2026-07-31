@@ -168,6 +168,35 @@ def test_diff_reports_improvements_and_regressions() -> None:
     assert result["regressed"][0]["deltaMs"] == 2.0
 
 
+def test_diff_excludes_verified_wait_zone_from_change_summary() -> None:
+    result = diff_tracy_captures(
+        {
+            "captureId": "base",
+            "seconds": 10,
+            "rows": [
+                {"name": "sleep @ time", "selfMs": 100.0},
+                {"name": "update @ Engine", "selfMs": 10.0},
+            ],
+        },
+        {
+            "captureId": "new",
+            "seconds": 10,
+            "rows": [
+                {"name": "sleep @ time", "selfMs": 10.0},
+                {"name": "update @ Engine", "selfMs": 12.0},
+            ],
+        },
+    )
+
+    assert result["summary"]["deltaMs"] == 2.0
+    changed_names = {
+        item["name"]
+        for key in ("improved", "regressed", "added", "removed")
+        for item in result[key]
+    }
+    assert "sleep @ time" not in changed_names
+
+
 def test_diff_separates_added_and_removed_functions() -> None:
     result = diff_tracy_captures(
         {

@@ -82,6 +82,7 @@ for name in (
     'tracyAnalysisCard', 'performanceUnifiedMonitorButton',
     'performanceAutoMonitoringButton', 'tracyGuideText',
     'tracyReportSection', 'tracyReportTitle', 'tracyReportConclusion',
+    'tracyHotspotScopeTitle', 'tracySelectedFrameRateTag',
 ):
     assert page.findChild(QObject, name) is not None, name
 assert page.findChild(QObject, 'tracyDurationSpinBox') is None
@@ -129,7 +130,7 @@ assert capture_button.property('level') == 1
 assert '已自动识别 Minecraft.Windows.exe' in guide_text.property('text')
 baseline = {{
     'id': 'capture-1', 'text': '首次检测', 'label': 'before',
-    'seconds': 10, 'matchedFunctions': 1,
+    'seconds': 10, 'averageFps': 60.0, 'matchedFunctions': 1,
 }}
 ready_state['captures'] = [baseline]
 ready_state['selectedCaptureId'] = 'capture-1'
@@ -151,6 +152,12 @@ assert capture_button.property('text') == '开始持续监测'
 assert report_section.property('visible') is True
 assert report_title.property('text') == '本次检测总结'
 assert report_conclusion.property('text') == '主要热点是 update @ Demo。'
+assert page.findChild(QObject, 'tracyHotspotScopeTitle').property('text') == (
+    '当前选中窗口最耗时函数（10 秒）'
+)
+assert page.findChild(QObject, 'tracySelectedFrameRateTag').property('text') == (
+    '60.0 FrameMark/s'
+)
 ready_state['busy'] = True
 ready_state['continuousActive'] = True
 ready_state['windowsCompleted'] = 2

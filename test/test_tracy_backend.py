@@ -98,6 +98,7 @@ def test_controller_quick_capture_uses_defaults_and_automatic_labels(
     handles[0].succeeded.emit(_capture_payload(20.0, seconds=7))
     assert controller.state["baselineCaptureId"] == "capture-1"
     assert controller.state["report"]["kind"] == "capture"
+    assert "FrameMark/s" in controller.state["captures"][0]["text"]
 
     controller.quick_capture()
     assert scheduled[1] == (7, "", 25)
@@ -272,6 +273,7 @@ def test_continuous_controller_repeats_until_current_window_finishes_after_stop(
     assert state["stopRequested"] is False
     assert state["busy"] is False
     assert state["windowsCompleted"] == 2
+    assert state["sessionSeconds"] == 12
     assert state["report"]["kind"] == "session"
     assert state["report"]["verdict"] == "监测完成"
     assert results[-1] == (True, "持续监测完成：共 2 个窗口")

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from .tracy_semantics import is_wait_zone_name
+
 
 def new_session_summary() -> dict[str, object]:
     """创建常量内存增长的持续监测归约状态。"""
@@ -45,6 +47,26 @@ def _metric(label: str, value: str) -> dict[str, str]:
     return {"label": label, "value": value}
 
 
+def _report_rows(capture: Mapping[str, object]) -> list[Mapping[str, object]]:
+    rows = _rows(capture, "rows") or _rows(capture, "top")
+    return sorted(
+        rows,
+        key=lambda row: (-_number(row.get("selfMs")), str(row.get("name", ""))),
+    )
+
+
+def _is_wait_zone(row: Mapping[str, object]) -> bool:
+    return is_wait_zone_name(row.get("name", ""))
+
+
+def _wait_self_ms(capture: Mapping[str, object]) -> float:
+    return sum(
+        _number(row.get("selfMs"))
+        for row in _report_rows(capture)
+        if _is_wait_zone(row)
+    )
+
+
 def _capture_metrics(capture: Mapping[str, object]) -> list[dict[str, str]]:
     metrics = [
         _metric("采样时长", f"{_integer(capture.get('seconds'))} 秒"),
@@ -52,10 +74,13 @@ def _capture_metrics(capture: Mapping[str, object]) -> list[dict[str, str]]:
     ]
     frames = capture.get("frames")
     if frames is not None:
-        metrics.insert(1, _metric("帧数", str(_integer(frames))))
+        metrics.insert(1, _metric("Tracy FrameMark 数", str(_integer(frames))))
     fps = capture.get("averageFps")
     if fps is not None:
-        metrics.append(_metric("窗口平均 FPS", f"{_number(fps):.1f}"))
+        metrics.append(_metric("Tracy FrameMark 频率", f"{_number(fps):.1f} 次/秒"))
+    wait_self_ms = _wait_self_ms(capture)
+    if wait_self_ms:
+        metrics.append(_metric("等待函数自身耗时", f"{wait_self_ms:.3f} ms"))
     captured_at = str(capture.get("capturedAt", "")).strip()
     if captured_at:
         metrics.append(_metric("检测时间", captured_at))
@@ -83,7 +108,7 @@ def _capture_recommendations(
     frames = _integer(capture.get("frames"))
     if frames and calls > frames:
         recommendations.append(
-            f"该函数平均每帧调用 {calls / frames:.2f} 次，检查是否存在重复执行。"
+            f"该函数平均每个 FrameMark 调用 {calls / frames:.2f} 次，检查是否存在重复执行。"
         )
     self_ms = _number(top.get("selfMs"))
     if self_ms and _number(top.get("totalMs")) >= self_ms * 1.5:
@@ -91,24 +116,50 @@ def _capture_recommendations(
     return recommendations
 
 
+def _wait_recommendation(capture: Mapping[str, object]) -> str | None:
+    wait_names = [
+        str(row.get("name", ""))
+        for row in _report_rows(capture)
+        if _is_wait_zone(row)
+    ]
+    if not wait_names:
+        return None
+    return f"{', '.join(wait_names)} 属于等待函数，等待函数不作为优化热点。"
+
+
 def build_capture_report(capture: Mapping[str, object]) -> dict[str, object]:
     """生成单次采样报告，不使用未公开的通过阈值。"""
-    hotspots = _rows(capture, "top")
+    hotspots = [row for row in _report_rows(capture) if not _is_wait_zone(row)]
     if not hotspots:
+        wait_note = _wait_recommendation(capture)
         return {
             "kind": "capture",
             "title": "本次检测总结",
             "verdict": "未发现热点",
             "tone": "info",
-            "conclusion": "本次没有可汇总的函数热点，请确认检测期间触发了目标玩法。",
+            "conclusion": (
+                "本次只采集到等待函数，没有可归因的执行热点。"
+                if wait_note
+                else "本次没有可汇总的函数热点，请确认检测期间触发了目标玩法。"
+            ),
             "metrics": _capture_metrics(capture),
             "highlights": [],
-            "recommendations": ["重新检测时，在游戏中持续操作需要分析的玩法。"],
+            "recommendations": [
+                wait_note or "重新检测时，在游戏中持续操作需要分析的玩法。"
+            ],
         }
     top = hotspots[0]
     top_self = _number(top.get("selfMs"))
-    total_self = _number(capture.get("totalSelfMs"))
-    share = f"，占全部函数自身耗时 {top_self / total_self * 100:.1f}%" if total_self else ""
+    actionable_self = sum(_number(row.get("selfMs")) for row in hotspots)
+    share = (
+        f"，占非等待函数自身耗时 {top_self / actionable_self * 100:.1f}%"
+        if actionable_self
+        else ""
+    )
+    recommendations = _capture_recommendations(capture, top)
+    wait_note = _wait_recommendation(capture)
+    if wait_note:
+        recommendations.insert(0, wait_note)
     return {
         "kind": "capture",
         "title": "本次检测总结",
@@ -117,7 +168,7 @@ def build_capture_report(capture: Mapping[str, object]) -> dict[str, object]:
         "conclusion": f"主要热点是 {top.get('name', '未知函数')}，自身耗时 {top_self:.3f} ms{share}。",
         "metrics": _capture_metrics(capture),
         "highlights": [_hotspot_item(row) for row in hotspots[:3]],
-        "recommendations": _capture_recommendations(capture, top),
+        "recommendations": recommendations,
     }
 
 
@@ -175,6 +226,7 @@ def _session_capture(session: Mapping[str, object]) -> dict[str, object]:
         "totalSelfMs": sum(_number(row.get("selfMs")) for row in rows),
         "capturedAt": session.get("capturedAt", ""),
         "top": rows[:3],
+        "rows": rows,
     }
 
 

@@ -337,7 +337,7 @@ def test_monitor_collects_constant_space_summary_until_manual_stop() -> None:
     assert state["status"] == "complete"
     assert state["sampleCount"] >= 2
     assert state["summary"]["systemCpuPercent"]["maximum"] >= 20
-    assert any(item["label"] == "AirPerf GPU 峰值" for item in state["metrics"])
+    assert any(item["label"] == "AirPerf 整机 GPU 峰值" for item in state["metrics"])
     assert changes
 
 
@@ -364,12 +364,18 @@ def test_monitor_records_every_graphics_bucket_without_duplicating_system_sample
 
 def test_report_metrics_skip_unavailable_indicators() -> None:
     metrics = build_airperf_report_metrics(
-        {"gpuTemperatureC": {"maximum": 61.5}},
+        {
+            "gpuTemperatureC": {"maximum": 61.5},
+            "gpuUsagePercent": {"average": 18.9},
+            "diskTotalPercent": {"maximum": 109.4},
+        },
         3,
     )
     assert metrics == [
         {"label": "AirPerf 采样", "value": "3"},
-        {"label": "AirPerf GPU 温度峰值", "value": "61.5 °C"},
+        {"label": "AirPerf 整机 GPU 平均", "value": "18.9%"},
+        {"label": "AirPerf 整机 GPU 温度峰值", "value": "61.5 °C"},
+        {"label": "AirPerf 磁盘累计忙碌峰值", "value": "109.4%"},
     ]
 
 

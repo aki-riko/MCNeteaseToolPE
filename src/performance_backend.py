@@ -14,6 +14,7 @@ from .airperf_backend import AirPerfMonitor
 from .config import TRACY_PROBE_INTERVAL_MS
 from .performance_monitor import MCSTUDIO_ROOT_ENV, PerformanceToolLocator, ProcessDescriptor
 from .performance_monitor import ProcessSample, WindowsProcessSampler
+from .performance_report import combine_session_metrics
 from .performance_snippets import (
     CPU_PROFILE_SNIPPET,
     MEMORY_PROFILE_SNIPPET,
@@ -159,23 +160,16 @@ class PerformanceBackend(QObject):
         report = tracy_state.get("report")
         if not isinstance(report, dict) or report.get("kind") != "session":
             return tracy_state
-        combined = dict(report)
-        metrics = list(combined.get("metrics", []))
-        if self._session_sample_count:
-            average = self._session_cpu_total / self._session_sample_count
-            metrics.extend(
-                [
-                    {"label": "CPU 平均", "value": f"{average:.1f}%"},
-                    {"label": "CPU 峰值", "value": f"{self._session_cpu_peak:.1f}%"},
-                    {"label": "内存峰值", "value": f"{self._session_memory_peak:.1f} MB"},
-                    {"label": "系统采样", "value": str(self._session_sample_count)},
-                ]
-            )
-        airperf_metrics = self._airperf.state.get("metrics", [])
-        if isinstance(airperf_metrics, list):
-            metrics.extend(item for item in airperf_metrics if isinstance(item, dict))
-        combined["metrics"] = metrics
-        tracy_state["report"] = combined
+        airperf_state = self._airperf.state
+        tracy_state["report"] = combine_session_metrics(
+            report,
+            session_seconds=int(tracy_state.get("sessionSeconds", 0)),
+            process_sample_count=self._session_sample_count,
+            process_cpu_total=self._session_cpu_total,
+            process_cpu_peak=self._session_cpu_peak,
+            process_memory_peak=self._session_memory_peak,
+            airperf_state=airperf_state,
+        )
         return tracy_state
 
     @staticmethod

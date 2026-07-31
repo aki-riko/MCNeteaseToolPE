@@ -49,11 +49,37 @@ def test_capture_report_summarizes_top_hotspots_and_factual_actions() -> None:
     assert {item["label"]: item["value"] for item in report["metrics"]}[
         "检测时间"
     ] == "2026-08-01 12:00:00"
+    metrics = {item["label"]: item["value"] for item in report["metrics"]}
+    assert metrics["Tracy FrameMark 数"] == "100"
+    assert metrics["Tracy FrameMark 频率"] == "10.0 次/秒"
     assert len(report["highlights"]) == 2
     assert "调用 200 次" in str(report["highlights"][0]["detail"])
     recommendations = "\n".join(report["recommendations"])
-    assert "平均每帧调用 2.00 次" in recommendations
+    assert "平均每个 FrameMark 调用 2.00 次" in recommendations
     assert "下游调用链" in recommendations
+
+
+def test_capture_report_separates_verified_wait_zone_from_actionable_hotspots() -> None:
+    capture = _capture()
+    wait_row = {
+        "name": "sleep @ time",
+        "selfMs": 40_392.973,
+        "totalMs": 40_392.973,
+        "calls": 358,
+    }
+    capture["rows"] = [wait_row, *capture["top"]]
+    capture["top"] = [wait_row, *capture["top"]]
+    capture["matchedFunctions"] = 3
+    capture["totalSelfMs"] = 40_422.973
+
+    report = build_capture_report(capture)
+    metrics = {item["label"]: item["value"] for item in report["metrics"]}
+
+    assert "sleep @ time" not in str(report["conclusion"])
+    assert "hot @ Demo.Server.Main" in str(report["conclusion"])
+    assert all(item["name"] != "sleep @ time" for item in report["highlights"])
+    assert metrics["等待函数自身耗时"] == "40392.973 ms"
+    assert any("等待函数不作为优化热点" in item for item in report["recommendations"])
 
 
 def test_capture_report_explains_empty_capture() -> None:

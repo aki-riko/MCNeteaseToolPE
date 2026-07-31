@@ -91,6 +91,7 @@ class _FakeAirPerfMonitor:
             "status": "monitoring" if self._active else "complete",
             "sampleCount": 2,
             "metrics": [
+                {"label": "AirPerf 采样", "value": "2"},
                 {"label": "原生 GPU 峰值", "value": "75.0%"},
             ],
         }
@@ -318,10 +319,10 @@ def test_unified_monitoring_stops_after_current_window_and_combines_system_metri
     }
     assert state["unifiedMonitoring"] is False
     assert state["tracy"]["report"]["verdict"] == "监测完成"
-    assert metrics["CPU 平均"] == "12.5%"
-    assert metrics["CPU 峰值"] == "12.5%"
-    assert metrics["内存峰值"] == "640.0 MB"
-    assert metrics["系统采样"] == "1"
+    assert metrics["进程 CPU 平均"] == "12.5%"
+    assert metrics["进程 CPU 峰值"] == "12.5%"
+    assert metrics["进程工作集峰值"] == "640.0 MB"
+    assert metrics["进程采样"] == "1（0.10 Hz）"
 
 
 def test_unified_monitoring_aggregates_direct_airperf_lifecycle_and_report(
@@ -351,6 +352,7 @@ def test_unified_monitoring_aggregates_direct_airperf_lifecycle_and_report(
         for item in backend.state["tracy"]["report"]["metrics"]
     }
     assert airperf.stop_calls == 1
+    assert metrics["AirPerf 采样"] == "2（0.20 Hz）"
     assert metrics["原生 GPU 峰值"] == "75.0%"
 
 

@@ -19,6 +19,7 @@ import tempfile
 from typing import Iterable, Mapping
 
 from .config import TRACY_HOST, TRACY_PORT
+from .tracy_semantics import is_wait_zone_name
 
 
 LOGGER = logging.getLogger(__name__)
@@ -357,7 +358,11 @@ def _capture_self_index(
     if not isinstance(rows, Iterable) or isinstance(rows, (str, bytes, Mapping)):
         raise TracyAnalysisError("Tracy 采样记录的函数数据无效")
     filtered = _matching_tracy_rows(rows, name_contains)  # type: ignore[arg-type]
-    return {str(row["name"]): float(row["selfMs"]) for row in filtered}
+    return {
+        str(row["name"]): float(row["selfMs"])
+        for row in filtered
+        if not is_wait_zone_name(row["name"])
+    }
 
 
 def _diff_rows(

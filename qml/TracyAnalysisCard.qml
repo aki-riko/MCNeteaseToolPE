@@ -304,8 +304,12 @@ Card {
             visible: root.captures.length > 0
 
             Label {
+                objectName: "tracyHotspotScopeTitle"
                 Layout.fillWidth: true
-                text: root.diff.summary !== undefined ? qsTr("前后变化") : qsTr("最耗时函数")
+                text: root.diff.summary !== undefined
+                      ? qsTr("前后变化")
+                      : qsTr("当前选中窗口最耗时函数（%1 秒）")
+                          .arg(Number(root.selectedSummary.seconds || 0))
                 font.bold: true
             }
             Tag {
@@ -313,8 +317,9 @@ Card {
                 status: Enums.statusLevel.info
             }
             Tag {
+                objectName: "tracySelectedFrameRateTag"
                 visible: Number(root.selectedSummary.averageFps || 0) > 0
-                text: qsTr("%1 FPS").arg(root._number(root.selectedSummary.averageFps, 1))
+                text: qsTr("%1 FrameMark/s").arg(root._number(root.selectedSummary.averageFps, 1))
                 status: Enums.statusLevel.info
             }
         }
