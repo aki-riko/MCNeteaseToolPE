@@ -267,6 +267,10 @@ class PerformanceBackend(QObject):
     def captureTracy(self, seconds: int, name_contains: str, label: str) -> None:
         self._tracy.capture(seconds, name_contains, label)
 
+    @Slot()
+    def captureTracyQuick(self) -> None:
+        self._tracy.quick_capture()
+
     @Slot(str)
     def selectTracyCapture(self, capture_id: str) -> None:
         self._tracy.select_capture(capture_id)

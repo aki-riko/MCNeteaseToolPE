@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping
 
+from .config import TRACY_CAPTURE_SECONDS, TRACY_PROBE_INTERVAL_MS
 from .tracy_analysis import (
     DEFAULT_TOP_ROWS,
     MAX_CAPTURE_SECONDS,
@@ -30,12 +31,17 @@ class TracyPerformanceController:
         emit_result: Callable[[bool, str], None],
         probe: Callable[[], dict[str, object]] | None = None,
         capture_runner: Callable[[int, str, int], dict[str, object]] | None = None,
+        capture_seconds: int = TRACY_CAPTURE_SECONDS,
+        probe_interval_ms: int = TRACY_PROBE_INTERVAL_MS,
     ) -> None:
         self._state_changed = state_changed
         self._emit_result = emit_result
         self._probe = probe or probe_tracy
         self._capture_runner = capture_runner or capture_tracy
+        self._capture_seconds = int(capture_seconds)
+        self._probe_interval_ms = int(probe_interval_ms)
         self._status = self._empty_status()
+        self._status_checked = False
         self._busy = False
         self._task_handle: object | None = None
         self._sequence = 0
@@ -61,6 +67,9 @@ class TracyPerformanceController:
     def state(self) -> dict[str, object]:
         return {
             **self._status,
+            "statusChecked": self._status_checked,
+            "captureSeconds": self._capture_seconds,
+            "probeIntervalMs": self._probe_interval_ms,
             "busy": self._busy,
             "captures": self._capture_summaries(),
             "selectedCaptureId": self._selected_capture_id,
@@ -77,6 +86,12 @@ class TracyPerformanceController:
             LOGGER.warning("探测原生 Tracy 失败：%s", error)
             self._status = self._empty_status()
             self._status["error"] = str(error)
+        self._status_checked = True
+
+    def quick_capture(self) -> None:
+        """使用默认参数采集热点；已有首次结果时自动生成前后对比。"""
+        label = "after" if self._baseline_capture_id else "before"
+        self.capture(self._capture_seconds, "", label)
 
     def capture(self, seconds: int, name_contains: str, label: str) -> None:
         capture_label = self._validate_capture_request(label)
@@ -220,7 +235,7 @@ class TracyPerformanceController:
         zones = capture.get("zones")
         self._emit_result(
             True,
-            f"Tracy {('基线' if label == 'before' else '复测')}采样完成："
+            f"{('首次检测' if label == 'before' else '对比检测')}完成："
             f"{frames if frames is not None else '?'} 帧，"
             f"{zones if zones is not None else '?'} 个区间",
         )

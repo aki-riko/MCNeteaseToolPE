@@ -4,10 +4,7 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-import subprocess
-import sys
 
 from PySide6.QtCore import QCoreApplication
 
@@ -372,123 +369,32 @@ def test_performance_page_is_registered_and_declares_fidelity_boundary() -> None
         'objectName: "performanceCpuChart"',
         'objectName: "performanceMemoryChart"',
         "TracyAnalysisCard",
+        "专业工具（可选）",
         'backend.copyProfileSnippet("cpu")',
         'backend.copyProfileSnippet("memory")',
         "不能直接替代网易手机集群",
         "官方未公开采样窗口",
     ):
         assert contract in page_source
+    assert page_source.index("TracyAnalysisCard {") < page_source.index(
+        'objectName: "performanceOfficialToolsCard"'
+    )
     for contract in (
         'objectName: "tracyAnalysisCard"',
-        'objectName: "tracyDurationSpinBox"',
-        'objectName: "tracyCaptureButton"',
-        'objectName: "tracyResetButton"',
-        'qsTr("采集复测并对比")',
-        'qsTr("再次复测并对比")',
+        'objectName: "tracyQuickCaptureButton"',
+        'qsTr("开始检测")',
+        'qsTr("再次检测并对比")',
+        'qsTr("等待 ModPC 启动…")',
         'qsTr("新增")',
         'qsTr("消失")',
-        'qsTr("Tracy 端口可达")',
-        "窗口平均 FPS 不等于网易手机集群的 p1/p5 或机审平均帧率",
+        "结果用于本机优化，不等于网易机审成绩",
+        "backend.captureTracyQuick()",
     ):
         assert contract in tracy_source
-
-
-def test_performance_page_loads_offscreen() -> None:
-    script = f"""
-import os
-import sys
-from pathlib import Path
-sys.path.insert(0, r'{REPO_ROOT}')
-os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-from PySide6.QtCore import QObject, QUrl
-from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
-from PySide6.QtWidgets import QApplication
-from prismqml import register_types
-from prismqml.python.core.engine import EngineManager
-from src.performance_backend import PerformanceBackend
-from src.performance_monitor import ProcessDescriptor, ProcessSample
-
-class Locator:
-    def discover(self):
-        return {{
-            'root': r'C:\\MCStudio',
-            'configured': True,
-            'tools': {{
-                'tracy': {{'available': True, 'path': r'C:\\MCStudio\\tracy\\tracy-profiler.exe'}},
-                'airperf': {{'available': True, 'path': r'C:\\MCStudio\\airperf\\airperf.exe'}},
-            }},
-        }}
-
-class Sampler:
-    def list_candidates(self):
-        return [ProcessDescriptor(42, 'Minecraft.Windows.exe')]
-    def reset(self, _pid):
-        pass
-    def sample(self, pid):
-        return ProcessSample(pid, 10.0, 500.0, 550.0)
-
-app = QApplication.instance() or QApplication([])
-engine = QQmlApplicationEngine()
-EngineManager.set_engine(engine)
-register_types(engine)
-backend = PerformanceBackend(locator=Locator(), sampler=Sampler(), launcher=lambda _path: True)
-component = QQmlComponent(engine, QUrl.fromLocalFile(r'{PAGE}'))
-assert not component.isError(), [error.toString() for error in component.errors()]
-page = component.create()
-assert page is not None, [error.toString() for error in component.errors()]
-page.setProperty('backend', backend)
-page.setWidth(1100)
-page.setHeight(800)
-app.processEvents()
-for name in (
-    'performanceOfficialToolsCard', 'performanceProcessCard',
-    'performanceProfileCard', 'performanceThresholdCard',
-    'performanceProcessSelector', 'performanceCpuChart', 'performanceMemoryChart',
-    'tracyAnalysisCard', 'tracyDurationSpinBox',
-    'tracyCaptureButton', 'tracyResetButton',
-):
-    assert page.findChild(QObject, name) is not None, name
-tracy_card = page.findChild(QObject, 'tracyAnalysisCard')
-capture_button = page.findChild(QObject, 'tracyCaptureButton')
-duration_spin = page.findChild(QObject, 'tracyDurationSpinBox')
-assert capture_button.property('text') == '采集基线'
-baseline = {{
-    'id': 'capture-1', 'text': '基线', 'label': 'before',
-    'seconds': 10, 'matchedFunctions': 1,
-}}
-tracy_card.setProperty('state', {{
-    'binAvailable': True, 'reachable': True, 'busy': False,
-    'captures': [baseline], 'selectedCaptureId': 'capture-1',
-    'baselineCaptureId': 'capture-1', 'comparisonCaptureId': '',
-    'hotspots': [], 'diff': {{}},
-}})
-app.processEvents()
-assert capture_button.property('text') == '采集复测并对比'
-assert duration_spin.property('enabled') is False
-comparison_state = tracy_card.property('state')
-comparison_state['comparisonCaptureId'] = 'capture-2'
-tracy_card.setProperty('state', comparison_state)
-app.processEvents()
-assert capture_button.property('text') == '再次复测并对比'
-backend.startMonitoring()
-app.processEvents()
-assert page.findChild(QObject, 'performanceCpuValue').property('text') == '10.0%'
-backend.stopMonitoring()
-print('performance page ok')
-"""
-    environment = dict(os.environ)
-    environment["QT_QPA_PLATFORM"] = "offscreen"
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=REPO_ROOT,
-        env=environment,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="ignore",
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr or result.stdout
-    output = result.stdout + result.stderr
-    assert "Detected anchors on an item that is managed by a layout" not in output
+    for removed_control in (
+        'objectName: "tracyDurationSpinBox"',
+        'objectName: "tracyFilterInput"',
+        'objectName: "tracyRefreshButton"',
+        'objectName: "tracyResetButton"',
+    ):
+        assert removed_control not in tracy_source

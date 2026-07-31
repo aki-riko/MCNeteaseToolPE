@@ -58,13 +58,51 @@ def _controller(
     results: list[tuple[bool, str]],
     *,
     reachable: bool = True,
+    capture_seconds: int = 10,
+    probe_interval_ms: int = 1500,
 ) -> TracyPerformanceController:
     return TracyPerformanceController(
         lambda: None,
         lambda success, message: results.append((success, message)),
         probe=lambda: _probe(reachable=reachable),
         capture_runner=lambda _seconds, _filter, _top: {},
+        capture_seconds=capture_seconds,
+        probe_interval_ms=probe_interval_ms,
     )
+
+
+def test_controller_quick_capture_uses_defaults_and_automatic_labels(
+    monkeypatch,
+) -> None:
+    handles = [_FakeTaskHandle(), _FakeTaskHandle()]
+    scheduled: list[tuple[object, ...]] = []
+    results: list[tuple[bool, str]] = []
+
+    def fake_run_in_pool(_operation, *arguments):
+        scheduled.append(arguments)
+        return handles[len(scheduled) - 1]
+
+    monkeypatch.setattr("prismqml.run_in_pool", fake_run_in_pool)
+    controller = _controller(
+        results,
+        capture_seconds=7,
+        probe_interval_ms=900,
+    )
+
+    assert controller.state["captureSeconds"] == 7
+    assert controller.state["probeIntervalMs"] == 900
+    assert controller.state["statusChecked"] is False
+
+    controller.quick_capture()
+    assert scheduled[0] == (7, "", 25)
+    handles[0].succeeded.emit(_capture_payload(20.0, seconds=7))
+    assert controller.state["baselineCaptureId"] == "capture-1"
+
+    controller.quick_capture()
+    assert scheduled[1] == (7, "", 25)
+    handles[1].succeeded.emit(_capture_payload(8.0, seconds=7))
+    assert controller.state["comparisonCaptureId"] == "capture-2"
+    assert controller.state["diff"]["summary"]["deltaMs"] == -12.0
 
 
 def test_controller_captures_baseline_and_builds_diff(monkeypatch) -> None:

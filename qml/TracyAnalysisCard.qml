@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// 原生 Tracy 函数热点抓取与前后采样对比卡片。
+// 面向日常优化的一键 Tracy 函数热点检测卡片。
 import QtQuick
 import QtQuick.Layouts
 import PrismQML
@@ -16,34 +16,22 @@ Card {
     readonly property bool ready: state.binAvailable === true && state.reachable === true
     readonly property bool busy: state.busy === true
     readonly property bool hasBaseline: String(state.baselineCaptureId || "") !== ""
-    readonly property bool hasComparison: String(state.comparisonCaptureId || "") !== ""
+    readonly property int captureSeconds: Number(state.captureSeconds || 10)
     readonly property var selectedSummary: _captureById(state.selectedCaptureId || "")
-    readonly property var baselineSummary: _captureById(state.baselineCaptureId || "")
     readonly property var diffRows: {
         var rows = []
-        var improved = diff.improved || []
-        var regressed = diff.regressed || []
-        var added = diff.added || []
-        var removed = diff.removed || []
-        for (var i = 0; i < improved.length; i++) {
-            var win = Object.assign({}, improved[i])
-            win.kind = "improved"
-            rows.push(win)
-        }
-        for (var j = 0; j < regressed.length; j++) {
-            var loss = Object.assign({}, regressed[j])
-            loss.kind = "regressed"
-            rows.push(loss)
-        }
-        for (var k = 0; k < added.length; k++) {
-            var fresh = Object.assign({}, added[k])
-            fresh.kind = "added"
-            rows.push(fresh)
-        }
-        for (var m = 0; m < removed.length; m++) {
-            var gone = Object.assign({}, removed[m])
-            gone.kind = "removed"
-            rows.push(gone)
+        var groups = [
+            [diff.improved || [], "improved"],
+            [diff.regressed || [], "regressed"],
+            [diff.added || [], "added"],
+            [diff.removed || [], "removed"]
+        ]
+        for (var i = 0; i < groups.length; i++) {
+            for (var j = 0; j < groups[i][0].length; j++) {
+                var row = Object.assign({}, groups[i][0][j])
+                row.kind = groups[i][1]
+                rows.push(row)
+            }
         }
         return rows
     }
@@ -51,25 +39,39 @@ Card {
     width: parent ? parent.width : 0
     autoHeight: true
 
-    function _captureIndex(captureId) {
-        for (var i = 0; i < captures.length; i++) {
-            if (String(captures[i].id) === String(captureId)) return i
-        }
-        return -1
-    }
-
     function _captureById(captureId) {
-        var index = _captureIndex(captureId)
-        return index >= 0 ? captures[index] : ({})
+        for (var i = 0; i < captures.length; i++) {
+            if (String(captures[i].id) === String(captureId)) return captures[i]
+        }
+        return ({})
     }
 
     function _number(value, decimals) {
         return Number(value || 0).toFixed(decimals)
     }
 
+    function _buttonText() {
+        if (busy) return qsTr("正在检测…")
+        if (state.statusChecked !== true) return qsTr("正在准备…")
+        if (state.binAvailable !== true) return qsTr("检测组件不可用")
+        if (state.reachable !== true) return qsTr("等待 ModPC 启动…")
+        return hasBaseline ? qsTr("再次检测并对比") : qsTr("开始检测")
+    }
+
+    function _guideText() {
+        if (busy) return qsTr("正在检测 %1 秒，请在游戏里正常操作要测的玩法。")
+                         .arg(captureSeconds)
+        if (state.statusChecked !== true) return qsTr("正在检查检测环境…")
+        if (state.binAvailable !== true) return qsTr("检测组件缺失，请重新安装当前版本。")
+        if (state.reachable !== true) return qsTr("请先启动 ModPC；检测到游戏后会自动就绪。")
+        if (diff.summary !== undefined) return qsTr("对比完成：绿色表示变快，橙色表示变慢。")
+        if (hasBaseline) return qsTr("已找到本次热点；修改后再点一次，会自动对比变化。")
+        return qsTr("进入要测的场景后点一下，接下来正常操作游戏即可。")
+    }
+
     function _diffKindText(kind) {
-        if (kind === "improved") return qsTr("改善")
-        if (kind === "regressed") return qsTr("回退")
+        if (kind === "improved") return qsTr("变快")
+        if (kind === "regressed") return qsTr("变慢")
         if (kind === "added") return qsTr("新增")
         return qsTr("消失")
     }
@@ -80,20 +82,14 @@ Card {
         return Enums.statusLevel.info
     }
 
-    function _captureButtonText() {
-        if (busy) return qsTr("采样中…")
-        if (!hasBaseline) return qsTr("采集基线")
-        if (!hasComparison) return qsTr("采集复测并对比")
-        return qsTr("再次复测并对比")
-    }
-
-    function _captureNext() {
-        if (!backend) return
-        backend.captureTracy(
-            Math.round(durationSpin.value),
-            filterInput.text,
-            hasBaseline ? "after" : "before"
-        )
+    Timer {
+        interval: Math.max(250, Number(root.state.probeIntervalMs || 1500))
+        repeat: true
+        running: root.visible && root.backend !== null && !root.busy
+                 && (root.state.statusChecked !== true
+                     || (root.state.binAvailable === true
+                         && root.state.reachable !== true))
+        onTriggered: root.backend.refreshTracyStatus()
     }
 
     Column {
@@ -102,13 +98,13 @@ Card {
 
         RowLayout {
             width: parent ? parent.width : 0
-            spacing: Enums.spacing.m
+            spacing: Enums.spacing.l
 
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: Enums.spacing.xxs
                 Label {
-                    text: qsTr("函数热点与前后对比")
+                    text: qsTr("一键性能检测")
                     color: Enums.textColor.primary
                     font.family: Enums.fontFamily
                     font.pixelSize: Enums.typography.subtitle
@@ -116,90 +112,20 @@ Card {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: qsTr("直连 ModPC 内嵌 Tracy，归约每个函数的 self / total / calls；采样时请在游戏内触发真实负载。")
-                    color: Enums.textColor.secondary
+                    text: root._guideText()
+                    color: root.busy ? Enums.statusLevel.warningColor : Enums.textColor.secondary
                     font.pixelSize: Enums.typography.caption
                     wrapMode: Text.WordWrap
                 }
             }
-            Tag {
-                text: root.state.binAvailable ? qsTr("CLI 已就绪") : qsTr("CLI 缺失")
-                status: root.state.binAvailable ? Enums.statusLevel.success : Enums.statusLevel.error
-            }
-            Tag {
-                text: root.state.reachable ? qsTr("Tracy 端口可达") : qsTr("Tracy 端口不可达")
-                status: root.state.reachable ? Enums.statusLevel.success : Enums.statusLevel.warning
-            }
             Button {
-                objectName: "tracyRefreshButton"
-                text: qsTr("重新探测")
-                style: Enums.button.style_default
-                enabled: !root.busy && root.backend !== null
-                onClicked: root.backend.refreshTracyStatus()
-            }
-        }
-
-        Label {
-            width: parent ? parent.width : 0
-            text: qsTr("端点：%1:%2　CLI：%3")
-                  .arg(root.state.address || qsTr("未配置"))
-                  .arg(root.state.port || "-")
-                  .arg(root.state.binDir || qsTr("未定位"))
-            color: Enums.textColor.tertiary
-            font.pixelSize: Enums.typography.caption
-            wrapMode: Text.WrapAnywhere
-        }
-
-        Separator { width: parent ? parent.width : 0 }
-
-        RowLayout {
-            width: parent ? parent.width : 0
-            spacing: Enums.spacing.m
-
-            SpinBox {
-                id: durationSpin
-                objectName: "tracyDurationSpinBox"
-                minimum: 1
-                maximum: 60
-                stepSize: 1
-                decimals: 0
-                suffix: qsTr(" 秒")
-                value: 10
-                enabled: !root.busy && !root.hasBaseline
-            }
-            LineEdit {
-                id: filterInput
-                objectName: "tracyFilterInput"
-                Layout.fillWidth: true
-                placeholderText: qsTr("函数名或脚本模块过滤；留空表示全部")
-                enabled: !root.busy
-            }
-            Button {
-                objectName: "tracyCaptureButton"
-                text: root._captureButtonText()
+                objectName: "tracyQuickCaptureButton"
+                Layout.preferredWidth: 190
+                text: root._buttonText()
                 style: Enums.button.style_filled
                 enabled: root.ready && !root.busy && root.backend !== null
-                onClicked: root._captureNext()
+                onClicked: root.backend.captureTracyQuick()
             }
-            Button {
-                objectName: "tracyResetButton"
-                text: qsTr("重新开始")
-                style: Enums.button.style_default
-                enabled: !root.busy && root.captures.length > 0
-                onClicked: root.backend.clearTracyCaptures()
-            }
-        }
-
-        Label {
-            width: parent ? parent.width : 0
-            text: root.busy
-                  ? qsTr("正在采样；请在游戏内持续触发要测的玩法。")
-                  : (!root.hasBaseline
-                     ? qsTr("第 1 步：采集基线。完成后，同一个按钮会自动进入复测对比。")
-                     : qsTr("基线已固定为 %1 秒；现在修改代码或场景后，直接采集复测。")
-                       .arg(root.baselineSummary.seconds || durationSpin.value))
-            color: root.busy ? Enums.statusLevel.warningColor : Enums.textColor.secondary
-            wrapMode: Text.WordWrap
         }
 
         RowLayout {
@@ -209,8 +135,7 @@ Card {
 
             Label {
                 Layout.fillWidth: true
-                text: root.selectedSummary.label === "before"
-                      ? qsTr("基线结果") : qsTr("最新复测结果")
+                text: root.diff.summary !== undefined ? qsTr("前后变化") : qsTr("最耗时函数")
                 font.bold: true
             }
             Tag {
@@ -218,15 +143,8 @@ Card {
                 status: Enums.statusLevel.info
             }
             Tag {
-                visible: Number(root.selectedSummary.frames || 0) > 0
-                text: qsTr("%1 帧 / %2 FPS（窗口平均）")
-                      .arg(root.selectedSummary.frames || 0)
-                      .arg(root._number(root.selectedSummary.averageFps, 1))
-                status: Enums.statusLevel.info
-            }
-            Tag {
-                visible: Number(root.selectedSummary.zones || 0) > 0
-                text: qsTr("%1 zones").arg(root.selectedSummary.zones || 0)
+                visible: Number(root.selectedSummary.averageFps || 0) > 0
+                text: qsTr("%1 FPS").arg(root._number(root.selectedSummary.averageFps, 1))
                 status: Enums.statusLevel.info
             }
         }
@@ -234,16 +152,14 @@ Card {
         Column {
             width: parent ? parent.width : 0
             spacing: Enums.spacing.xs
-            visible: root.hotspots.length > 0
+            visible: root.hotspots.length > 0 && root.diff.summary === undefined
 
             RowLayout {
                 width: parent ? parent.width : 0
                 Label { Layout.fillWidth: true; text: qsTr("函数 / 源文件"); font.bold: true }
-                Label { Layout.preferredWidth: 82; text: "self ms"; font.bold: true }
-                Label { Layout.preferredWidth: 82; text: "total ms"; font.bold: true }
-                Label { Layout.preferredWidth: 68; text: qsTr("调用"); font.bold: true }
-                Label { Layout.preferredWidth: 82; text: "ms/帧"; font.bold: true }
-                Label { Layout.preferredWidth: 82; text: "ms/次"; font.bold: true }
+                Label { Layout.preferredWidth: 100; text: qsTr("自身耗时"); font.bold: true }
+                Label { Layout.preferredWidth: 100; text: qsTr("总耗时"); font.bold: true }
+                Label { Layout.preferredWidth: 72; text: qsTr("调用"); font.bold: true }
             }
             Repeater {
                 model: root.hotspots
@@ -256,16 +172,18 @@ Card {
                         wrapMode: Text.NoWrap
                         elide: Text.ElideMiddle
                     }
-                    Label { Layout.preferredWidth: 82; text: root._number(modelData.selfMs, 3) }
-                    Label { Layout.preferredWidth: 82; text: root._number(modelData.totalMs, 3) }
-                    Label { Layout.preferredWidth: 68; text: String(modelData.calls || 0) }
-                    Label { Layout.preferredWidth: 82; text: root._number(modelData.selfPerFrameMs, 4) }
-                    Label { Layout.preferredWidth: 82; text: root._number(modelData.selfPerCallMs, 4) }
+                    Label {
+                        Layout.preferredWidth: 100
+                        text: qsTr("%1 ms").arg(root._number(modelData.selfMs, 3))
+                    }
+                    Label {
+                        Layout.preferredWidth: 100
+                        text: qsTr("%1 ms").arg(root._number(modelData.totalMs, 3))
+                    }
+                    Label { Layout.preferredWidth: 72; text: String(modelData.calls || 0) }
                 }
             }
         }
-
-        Separator { width: parent ? parent.width : 0; visible: root.diff.summary !== undefined }
 
         Column {
             width: parent ? parent.width : 0
@@ -274,13 +192,10 @@ Card {
 
             Label {
                 width: parent ? parent.width : 0
-                text: qsTr("self 总耗时：%1 → %2 ms，变化 %3 ms（%4）")
+                text: qsTr("总耗时 %1 → %2 ms（变化 %3 ms）")
                       .arg(root._number(root.diff.summary ? root.diff.summary.baseSelfMs : 0, 3))
                       .arg(root._number(root.diff.summary ? root.diff.summary.newSelfMs : 0, 3))
                       .arg(root._number(root.diff.summary ? root.diff.summary.deltaMs : 0, 3))
-                      .arg(root.diff.summary && root.diff.summary.percent !== null
-                           ? root._number(root.diff.summary.percent, 2) + "%"
-                           : qsTr("基线为 0，比例不可计算"))
                 color: root.diff.summary && Number(root.diff.summary.deltaMs) <= 0
                        ? Enums.statusLevel.successColor : Enums.statusLevel.warningColor
                 font.bold: true
@@ -302,7 +217,7 @@ Card {
                     }
                     Label {
                         Layout.preferredWidth: 210
-                        text: qsTr("%1 → %2 ms　Δ %3 ms")
+                        text: qsTr("%1 → %2 ms　变化 %3 ms")
                               .arg(root._number(modelData.baseMs, 3))
                               .arg(root._number(modelData.newMs, 3))
                               .arg(root._number(modelData.deltaMs, 3))
@@ -313,7 +228,7 @@ Card {
 
         Label {
             width: parent ? parent.width : 0
-            text: qsTr("diff 只有在相同设备、场景和采样时长下才可比较；窗口平均 FPS 不等于网易手机集群的 p1/p5 或机审平均帧率。")
+            text: qsTr("结果用于本机优化，不等于网易机审成绩。")
             color: Enums.textColor.tertiary
             font.pixelSize: Enums.typography.caption
             wrapMode: Text.WordWrap

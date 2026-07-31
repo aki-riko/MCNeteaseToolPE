@@ -77,12 +77,18 @@ Item {
                 }
                 Label {
                     width: parent ? parent.width : 0
-                    text: qsTr("桥接 MCStudio 官方工具，并实时观察 ModPC 进程的 CPU 与工作集变化。")
+                    text: qsTr("一键找出 ModPC 中最耗时的函数，并自动对比优化前后的变化。")
                     color: Enums.textColor.secondary
                     font.family: Enums.fontFamily
                     font.pixelSize: Enums.typography.caption
                     wrapMode: Text.WordWrap
                 }
+            }
+
+            TracyAnalysisCard {
+                width: parent ? parent.width : 0
+                backend: root.backend
+                state: root._tracy
             }
 
             Card {
@@ -103,7 +109,7 @@ Item {
                             Layout.fillWidth: true
                             spacing: Enums.spacing.xxs
                             Label {
-                                text: qsTr("MCStudio 官方工具")
+                                text: qsTr("专业工具（可选）")
                                 color: Enums.textColor.primary
                                 font.family: Enums.fontFamily
                                 font.pixelSize: Enums.typography.subtitle
@@ -195,12 +201,6 @@ Item {
                         }
                     }
                 }
-            }
-
-            TracyAnalysisCard {
-                width: parent ? parent.width : 0
-                backend: root.backend
-                state: root._tracy
             }
 
             Card {
