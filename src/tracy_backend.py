@@ -5,10 +5,17 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Mapping
 from datetime import datetime
 
-from .config import TRACY_CAPTURE_SECONDS, TRACY_PROBE_INTERVAL_MS
+from PySide6.QtCore import QTimer
+
+from .config import (
+    TRACY_CAPTURE_COOLDOWN_MS,
+    TRACY_CAPTURE_SECONDS,
+    TRACY_PROBE_INTERVAL_MS,
+)
 from .tracy_analysis import (
     DEFAULT_TOP_ROWS,
     MAX_CAPTURE_SECONDS,
@@ -42,6 +49,10 @@ class TracyPerformanceController:
         capture_runner: Callable[[int, str, int], dict[str, object]] | None = None,
         capture_seconds: int = TRACY_CAPTURE_SECONDS,
         probe_interval_ms: int = TRACY_PROBE_INTERVAL_MS,
+        capture_cooldown_ms: int = TRACY_CAPTURE_COOLDOWN_MS,
+        schedule_later: Callable[[int, Callable[[], None]], None] | None = None,
+        monotonic: Callable[[], float] | None = None,
+        continuous_finished: Callable[[bool], None] | None = None,
     ) -> None:
         self._state_changed = state_changed
         self._emit_result = emit_result
@@ -49,6 +60,10 @@ class TracyPerformanceController:
         self._capture_runner = capture_runner or capture_tracy
         self._capture_seconds = int(capture_seconds)
         self._probe_interval_ms = int(probe_interval_ms)
+        self._capture_cooldown_ms = max(0, int(capture_cooldown_ms))
+        self._schedule_later = schedule_later or QTimer.singleShot
+        self._monotonic = monotonic or time.monotonic
+        self._continuous_finished = continuous_finished
         self._status = self._empty_status()
         self._status_checked = False
         self._busy = False
@@ -64,6 +79,8 @@ class TracyPerformanceController:
         self._continuous_active = False
         self._stop_requested = False
         self._session_summary = new_session_summary()
+        self._session_started_at: float | None = None
+        self._session_finished_seconds = 0.0
 
     @staticmethod
     def _empty_status() -> dict[str, object]:
@@ -82,12 +99,14 @@ class TracyPerformanceController:
             **self._status,
             "statusChecked": self._status_checked,
             "captureSeconds": self._capture_seconds,
+            "captureCooldownMs": self._capture_cooldown_ms,
             "probeIntervalMs": self._probe_interval_ms,
             "busy": self._busy,
             "continuousActive": self._continuous_active,
             "stopRequested": self._stop_requested,
             "windowsCompleted": int(self._session_summary.get("windows", 0)),
-            "sessionSeconds": int(self._session_summary.get("seconds", 0)),
+            "sessionSeconds": self._session_elapsed_seconds(),
+            "tracySeconds": int(self._session_summary.get("seconds", 0)),
             "captures": self._capture_summaries(),
             "selectedCaptureId": self._selected_capture_id,
             "baselineCaptureId": self._baseline_capture_id,
@@ -127,6 +146,8 @@ class TracyPerformanceController:
         if not self._capture_is_ready():
             return False
         self._session_summary = new_session_summary()
+        self._session_started_at = self._monotonic()
+        self._session_finished_seconds = 0.0
         self._continuous_active = True
         self._stop_requested = False
         self._diff = {}
@@ -273,6 +294,18 @@ class TracyPerformanceController:
             return
         self._report = build_session_report(self._session_summary, active=True)
         self._state_changed()
+        self._schedule_later(
+            self._capture_cooldown_ms,
+            self._continue_continuous_capture,
+        )
+
+    def _continue_continuous_capture(self) -> None:
+        if not self._continuous_active:
+            return
+        if self._stop_requested:
+            windows = int(self._session_summary.get("windows", 0))
+            self._finish_continuous(True, f"持续监测完成：共 {windows} 个窗口")
+            return
         self._start_capture_task(
             self._capture_seconds,
             "",
@@ -280,11 +313,26 @@ class TracyPerformanceController:
         )
 
     def _finish_continuous(self, success: bool, message: str) -> None:
+        self._session_finished_seconds = float(self._session_elapsed_seconds())
+        self._session_started_at = None
         self._continuous_active = False
         self._stop_requested = False
         self._report = build_session_report(self._session_summary, active=False)
         self._set_busy(False)
+        if self._continuous_finished is not None:
+            try:
+                self._continuous_finished(success)
+            except Exception:  # noqa: BLE001 - 结束回调失败不能吞掉原始采样结果
+                LOGGER.exception("Tracy 持续采样结束回调失败")
         self._emit_result(success, message)
+
+    def _session_elapsed_seconds(self) -> int:
+        captured_seconds = int(self._session_summary.get("seconds", 0))
+        if self._session_started_at is not None:
+            elapsed = max(0.0, self._monotonic() - self._session_started_at)
+        else:
+            elapsed = self._session_finished_seconds
+        return max(captured_seconds, int(round(elapsed)))
 
     @staticmethod
     def _validated_capture(payload: object) -> dict[str, object] | None:

@@ -60,6 +60,10 @@ def _controller(
     reachable: bool = True,
     capture_seconds: int = 10,
     probe_interval_ms: int = 1500,
+    capture_cooldown_ms: int = 1000,
+    schedule_later=None,
+    monotonic=None,
+    continuous_finished=None,
 ) -> TracyPerformanceController:
     return TracyPerformanceController(
         lambda: None,
@@ -68,6 +72,10 @@ def _controller(
         capture_runner=lambda _seconds, _filter, _top: {},
         capture_seconds=capture_seconds,
         probe_interval_ms=probe_interval_ms,
+        capture_cooldown_ms=capture_cooldown_ms,
+        schedule_later=(schedule_later or (lambda _delay, callback: callback())),
+        monotonic=monotonic,
+        continuous_finished=continuous_finished,
     )
 
 
@@ -309,6 +317,45 @@ def test_continuous_controller_repeats_until_current_window_finishes_after_stop(
     assert results[-1] == (True, "持续监测完成：共 2 个窗口")
 
 
+def test_continuous_controller_waits_for_cooldown_and_can_stop_during_it(
+    monkeypatch,
+) -> None:
+    handles = [_FakeTaskHandle(), _FakeTaskHandle()]
+    scheduled: list[tuple[object, ...]] = []
+    delayed: list[tuple[int, object]] = []
+    results: list[tuple[bool, str]] = []
+
+    def fake_run_in_pool(_operation, *arguments):
+        scheduled.append(arguments)
+        return handles[len(scheduled) - 1]
+
+    monkeypatch.setattr("prismqml.run_in_pool", fake_run_in_pool)
+    controller = _controller(
+        results,
+        capture_seconds=10,
+        capture_cooldown_ms=1000,
+        schedule_later=lambda delay, callback: delayed.append((delay, callback)),
+    )
+
+    controller.start_continuous()
+    handles[0].succeeded.emit(_capture_payload(20.0))
+
+    assert scheduled == [(10, "", 25)]
+    assert delayed[0][0] == 1000
+    assert controller.state["busy"] is True
+    delayed.pop(0)[1]()
+    assert scheduled == [(10, "", 25), (10, "", 25)]
+
+    handles[1].succeeded.emit(_capture_payload(8.0))
+    assert controller.stop_continuous() is True
+    delayed.pop(0)[1]()
+
+    assert len(scheduled) == 2
+    assert controller.state["continuousActive"] is False
+    assert controller.state["windowsCompleted"] == 2
+    assert results[-1] == (True, "持续监测完成：共 2 个窗口")
+
+
 def test_continuous_controller_finishes_partial_report_on_worker_failure(
     monkeypatch,
 ) -> None:
@@ -327,3 +374,15 @@ def test_continuous_controller_finishes_partial_report_on_worker_failure(
     assert state["report"]["verdict"] == "监测完成"
     assert results[-1][0] is False
     assert "连接断开" in results[-1][1]
+
+
+def test_continuous_controller_notifies_owner_after_worker_failure(monkeypatch) -> None:
+    handle = _FakeTaskHandle()
+    finished: list[bool] = []
+    monkeypatch.setattr("prismqml.run_in_pool", lambda _operation, *_args: handle)
+    controller = _controller([], continuous_finished=finished.append)
+
+    controller.start_continuous()
+    handle.failed.emit(RuntimeError("残缺窗口"))
+
+    assert finished == [False]

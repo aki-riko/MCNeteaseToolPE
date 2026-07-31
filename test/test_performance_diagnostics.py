@@ -509,6 +509,40 @@ def test_auto_monitoring_restarts_stability_window_after_tracy_disconnect(
     assert scheduled == [(10, "", 25)]
 
 
+def test_auto_monitoring_stops_all_collectors_and_blocks_pid_after_tracy_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _application()
+    handle = _FakeTaskHandle()
+    scheduled: list[tuple[object, ...]] = []
+    airperf = _FakeAirPerfMonitor()
+
+    def fake_run_in_pool(_operation, *arguments):
+        scheduled.append(arguments)
+        return handle
+
+    monkeypatch.setattr("prismqml.run_in_pool", fake_run_in_pool)
+    backend = PerformanceBackend(
+        locator=_FakeLocator(tmp_path),
+        sampler=_FakeSampler(),
+        tracy_probe=_reachable_tracy_probe,
+        tracy_capture_runner=lambda _seconds, _filter, _top: {},
+        airperf_monitor=airperf,
+        automatic_stability_ms=0,
+    )
+    backend.refresh()
+    backend.refreshPerformanceTarget()
+    assert backend.state["unifiedMonitoring"] is True
+
+    handle.failed.emit(RuntimeError("Instrumentation failure"))
+    backend.refreshPerformanceTarget()
+
+    assert backend.state["unifiedMonitoring"] is False
+    assert backend.state["monitoring"] is False
+    assert backend.state["airperf"]["active"] is False
+    assert len(scheduled) == 1
+
+
 def test_backend_launches_only_discovered_official_tools(tmp_path: Path) -> None:
     _application()
     root = tmp_path / "MCStudio"

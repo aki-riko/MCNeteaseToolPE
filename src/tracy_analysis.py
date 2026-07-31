@@ -31,6 +31,13 @@ DEFAULT_TOP_ROWS = 25
 TRACY_EXECUTABLES = ("tracy-capture.exe", "tracy-csvexport.exe")
 _CREATE_NO_WINDOW = 0x08000000
 _NS_PER_MS = 1_000_000.0
+_DURATION_UNITS = {
+    "ns": 1e-9,
+    "us": 1e-6,
+    "µs": 1e-6,
+    "ms": 1e-3,
+    "s": 1.0,
+}
 
 
 class TracyAnalysisError(RuntimeError):
@@ -191,6 +198,23 @@ def parse_capture_stats(text: str) -> dict[str, int | None]:
     return {"frames": _value("Frames"), "zones": _value("Zones")}
 
 
+def parse_capture_span_seconds(text: str) -> float | None:
+    """读取 tracy-capture 的真实 Time span，并统一换算为秒。"""
+
+    match = re.search(
+        r"Time\s+span\s*:\s*([\d.]+)\s*(ns|us|µs|ms|s)\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None
+    return value * _DURATION_UNITS[match.group(2).casefold()]
+
+
 def filter_tracy_rows(
     rows: Iterable[dict[str, object]],
     name_contains: str = "",
@@ -274,6 +298,23 @@ def _capture_trace(
     if result.returncode != 0:
         detail = output.strip()[-300:]
         raise TracyAnalysisError(f"Tracy 抓取失败（退出码 {result.returncode}）：{detail}")
+    instrumentation_failure = re.search(
+        r"Instrumentation failure:\s*([^\r\n]+)",
+        output,
+        flags=re.IGNORECASE,
+    )
+    if instrumentation_failure is not None:
+        raise TracyAnalysisError(
+            "Tracy 抓取失败：Instrumentation failure: "
+            + instrumentation_failure.group(1).strip()
+        )
+    captured_seconds = parse_capture_span_seconds(output)
+    minimum_seconds = max(0.5, duration * 0.8)
+    if captured_seconds is not None and captured_seconds < minimum_seconds:
+        raise TracyAnalysisError(
+            "Tracy 抓取提前结束："
+            f"实际 {captured_seconds:.3f} 秒，预期 {duration} 秒"
+        )
     if not trace_path.is_file() or trace_path.stat().st_size == 0:
         raise TracyAnalysisError("Tracy 未生成有效采样文件，请确认 ModPC 正在运行")
     return output
@@ -330,16 +371,24 @@ def capture_tracy(
         )
         rows = _export_trace_rows(trace_path, tools["tracy-csvexport.exe"])
     stats = parse_capture_stats(capture_output)
+    capture_span_seconds = parse_capture_span_seconds(capture_output)
+    if capture_span_seconds is None:
+        capture_span_seconds = float(duration)
     frames = stats["frames"]
     decorated_rows = _decorate_rows(rows, frames)
     visible_rows = filter_tracy_rows(decorated_rows, name_contains, top_n)
     return {
         "seconds": duration,
+        "captureSpanSeconds": round(capture_span_seconds, 3),
         "address": host,
         "port": normalized_port,
         "frames": frames,
         "zones": stats["zones"],
-        "averageFps": round(frames / duration, 2) if frames is not None else None,
+        "averageFps": (
+            round(frames / capture_span_seconds, 2)
+            if frames is not None and capture_span_seconds > 0
+            else None
+        ),
         "filter": name_contains.strip(),
         "uniqueFunctions": len(decorated_rows),
         "matchedFunctions": len(_matching_tracy_rows(decorated_rows, name_contains)),

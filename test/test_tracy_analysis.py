@@ -14,6 +14,7 @@ from src.tracy_analysis import (
     TracyAnalysisError,
     capture_tracy,
     diff_tracy_captures,
+    parse_capture_span_seconds,
     parse_capture_stats,
     probe_tracy,
     reduce_tracy_csv,
@@ -98,6 +99,10 @@ def test_parse_capture_stats_handles_counts_and_missing_fields() -> None:
         "zones": 180446,
     }
     assert parse_capture_stats("Connecting...\n") == {"frames": None, "zones": None}
+    assert parse_capture_span_seconds("Time span: 156.36 ms\n") == pytest.approx(
+        0.15636
+    )
+    assert parse_capture_span_seconds("Time span: 10.09 s\n") == pytest.approx(10.09)
 
 
 def test_capture_keeps_full_rows_while_filtering_inline(monkeypatch, tmp_path: Path) -> None:
@@ -113,7 +118,7 @@ def test_capture_keeps_full_rows_while_filtering_inline(monkeypatch, tmp_path: P
             return subprocess.CompletedProcess(
                 arguments,
                 0,
-                stdout=b"Frames: 120\nZones: 2,400\n",
+                stdout=b"Frames: 120\nTime span: 2.00 s\nZones: 2,400\n",
                 stderr=b"",
             )
         csv_output = SELF_CSV if "-e" in arguments else TOTAL_CSV
@@ -134,11 +139,57 @@ def test_capture_keeps_full_rows_while_filtering_inline(monkeypatch, tmp_path: P
     assert len(calls) == 3
     assert result["frames"] == 120
     assert result["averageFps"] == 60.0
+    assert result["captureSpanSeconds"] == 2.0
     assert result["uniqueFunctions"] == 2
     assert result["matchedFunctions"] == 1
     assert len(result["rows"]) == 2
     assert len(result["top"]) == 1
     assert result["top"][0]["selfPerFrameMs"] == pytest.approx(2.0 / 120, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("capture_output", "expected_message"),
+    [
+        (
+            "Instrumentation failure: Zone is ended twice.\n"
+            "Frames: 19\nTime span: 156.36 ms\nZones: 11,468\n",
+            "Instrumentation failure: Zone is ended twice",
+        ),
+        (
+            "Frames: 20\nTime span: 250.00 ms\nZones: 1,000\n",
+            "Tracy 抓取提前结束",
+        ),
+    ],
+)
+def test_capture_rejects_success_code_with_incomplete_trace(
+    monkeypatch,
+    tmp_path: Path,
+    capture_output: str,
+    expected_message: str,
+) -> None:
+    for name in ("tracy-capture.exe", "tracy-csvexport.exe"):
+        (tmp_path / name).write_bytes(b"verified-test-placeholder")
+
+    def fake_run(
+        arguments: list[str], timeout: float
+    ) -> subprocess.CompletedProcess[bytes]:
+        del timeout
+        output_path = Path(arguments[arguments.index("-o") + 1])
+        output_path.write_bytes(b"partial-trace")
+        return subprocess.CompletedProcess(
+            arguments,
+            0,
+            stdout=capture_output.encode("utf-8"),
+            stderr=b"",
+        )
+
+    monkeypatch.setattr("src.tracy_analysis._run_tool", fake_run)
+
+    with pytest.raises(TracyAnalysisError, match=expected_message):
+        capture_tracy(
+            10,
+            environment={"MCNETEASE_TRACY_BIN_DIR": str(tmp_path)},
+        )
 
 
 def test_diff_reports_improvements_and_regressions() -> None:

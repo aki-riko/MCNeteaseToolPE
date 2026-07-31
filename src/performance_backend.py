@@ -63,7 +63,12 @@ class PerformanceBackend(QObject):
             automatic_stability_ms,
             monotonic,
         )
-        self._initialize_monitors(tracy_probe, tracy_capture_runner, airperf_monitor)
+        self._initialize_monitors(
+            tracy_probe,
+            tracy_capture_runner,
+            airperf_monitor,
+            monotonic,
+        )
 
     def _initialize_state(
         self,
@@ -96,12 +101,15 @@ class PerformanceBackend(QObject):
         tracy_probe: Callable[[], dict[str, object]] | None,
         tracy_capture_runner: Callable[[int, str, int], dict[str, object]] | None,
         airperf_monitor: object | None,
+        monotonic: Callable[[], float] | None,
     ) -> None:
         self._tracy = TracyPerformanceController(
             self.stateChanged.emit,
             self._emit_result,
             probe=tracy_probe,
             capture_runner=tracy_capture_runner,
+            monotonic=monotonic,
+            continuous_finished=self._handle_tracy_continuous_finished,
         )
         self._airperf_monitor_injected = airperf_monitor is not None
         self._airperf = airperf_monitor or AirPerfMonitor(self.stateChanged.emit)
@@ -112,6 +120,16 @@ class PerformanceBackend(QObject):
         self._discovery_timer.setInterval(TRACY_PROBE_INTERVAL_MS)
         self._discovery_timer.timeout.connect(self.refreshPerformanceTarget)
         self._discovery_timer.start()
+
+    def _handle_tracy_continuous_finished(self, success: bool) -> None:
+        if success:
+            return
+        self._auto_start_gate.reset("tracy_capture_failed")
+        if self._selected_pid:
+            self._auto_blocked_pid = self._selected_pid
+        self._stop_monitoring("")
+        self._airperf.stop()
+        self.stateChanged.emit()
 
     @Property("QVariantMap", notify=stateChanged)
     def state(self) -> dict[str, object]:

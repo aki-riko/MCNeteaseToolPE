@@ -14,6 +14,7 @@ def new_session_summary() -> dict[str, object]:
     return {
         "windows": 0,
         "seconds": 0,
+        "captureSpanSeconds": 0.0,
         "frames": 0,
         "framesKnown": True,
         "zones": 0,
@@ -180,6 +181,9 @@ def add_capture_to_session(
     session["seconds"] = _integer(session.get("seconds")) + _integer(
         capture.get("seconds")
     )
+    session["captureSpanSeconds"] = _number(
+        session.get("captureSpanSeconds")
+    ) + _number(capture.get("captureSpanSeconds") or capture.get("seconds"))
     frames = capture.get("frames")
     if frames is None:
         session["framesKnown"] = False
@@ -215,13 +219,19 @@ def _session_capture(session: Mapping[str, object]) -> dict[str, object]:
     rows = [dict(row) for row in values if isinstance(row, Mapping)]
     rows.sort(key=lambda row: (-_number(row.get("selfMs")), str(row.get("name", ""))))
     seconds = _integer(session.get("seconds"))
+    capture_span_seconds = _number(session.get("captureSpanSeconds")) or float(seconds)
     frames = _integer(session.get("frames"))
     frames_known = session.get("framesKnown") is True
     return {
         "seconds": seconds,
+        "captureSpanSeconds": capture_span_seconds,
         "frames": frames if frames_known else None,
         "zones": _integer(session.get("zones")),
-        "averageFps": frames / seconds if frames_known and seconds else None,
+        "averageFps": (
+            frames / capture_span_seconds
+            if frames_known and capture_span_seconds
+            else None
+        ),
         "matchedFunctions": len(rows),
         "totalSelfMs": sum(_number(row.get("selfMs")) for row in rows),
         "capturedAt": session.get("capturedAt", ""),
