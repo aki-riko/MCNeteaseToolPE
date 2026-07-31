@@ -186,6 +186,39 @@ def test_backend_samples_process_and_caps_history(tmp_path: Path) -> None:
     assert len(state["memoryHistory"]) == MAX_HISTORY_SAMPLES
 
 
+def test_backend_refresh_target_auto_selects_late_modpc_process(tmp_path: Path) -> None:
+    _application()
+    sampler = _FakeSampler()
+    sampler.processes = []
+    probe_calls: list[bool] = []
+
+    def tracy_probe() -> dict[str, object]:
+        probe_calls.append(True)
+        return {
+            "address": "127.0.0.1",
+            "port": 8086,
+            "reachable": False,
+            "binAvailable": True,
+            "binDir": "tracy_bin",
+            "tools": {},
+        }
+
+    backend = PerformanceBackend(
+        locator=_FakeLocator(tmp_path),
+        sampler=sampler,
+        tracy_probe=tracy_probe,
+    )
+    backend.refresh()
+    assert backend.state["selectedPid"] == 0
+
+    sampler.processes = [ProcessDescriptor(84, "ModPC.exe")]
+    backend.refreshPerformanceTarget()
+
+    assert backend.state["selectedPid"] == 84
+    assert backend.state["processes"][0]["name"] == "ModPC.exe"
+    assert len(probe_calls) == 2
+
+
 def test_backend_launches_only_discovered_official_tools(tmp_path: Path) -> None:
     _application()
     root = tmp_path / "MCStudio"
@@ -389,6 +422,7 @@ def test_performance_page_is_registered_and_declares_fidelity_boundary() -> None
         'qsTr("消失")',
         "结果用于本机优化，不等于网易机审成绩",
         "backend.captureTracyQuick()",
+        "backend.refreshPerformanceTarget()",
     ):
         assert contract in tracy_source
     for removed_control in (

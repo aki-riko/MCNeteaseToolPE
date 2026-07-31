@@ -89,6 +89,8 @@ Item {
                 width: parent ? parent.width : 0
                 backend: root.backend
                 state: root._tracy
+                processes: root._processes
+                selectedPid: Number(root._state.selectedPid || 0)
             }
 
             Card {

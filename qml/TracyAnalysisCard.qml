@@ -10,6 +10,8 @@ Card {
 
     property var backend: null
     property var state: ({})
+    property var processes: []
+    property int selectedPid: 0
     readonly property var captures: state.captures || []
     readonly property var hotspots: state.hotspots || []
     readonly property var diff: state.diff || ({})
@@ -17,6 +19,7 @@ Card {
     readonly property bool busy: state.busy === true
     readonly property bool hasBaseline: String(state.baselineCaptureId || "") !== ""
     readonly property int captureSeconds: Number(state.captureSeconds || 10)
+    readonly property var detectedProcess: _processByPid(selectedPid)
     readonly property var selectedSummary: _captureById(state.selectedCaptureId || "")
     readonly property var diffRows: {
         var rows = []
@@ -46,6 +49,13 @@ Card {
         return ({})
     }
 
+    function _processByPid(pid) {
+        for (var i = 0; i < processes.length; i++) {
+            if (Number(processes[i].pid) === Number(pid)) return processes[i]
+        }
+        return processes.length > 0 ? processes[0] : ({})
+    }
+
     function _number(value, decimals) {
         return Number(value || 0).toFixed(decimals)
     }
@@ -63,10 +73,20 @@ Card {
                          .arg(captureSeconds)
         if (state.statusChecked !== true) return qsTr("正在检查检测环境…")
         if (state.binAvailable !== true) return qsTr("检测组件缺失，请重新安装当前版本。")
-        if (state.reachable !== true) return qsTr("请先启动 ModPC；检测到游戏后会自动就绪。")
+        if (state.reachable !== true) {
+            if (detectedProcess.text) {
+                return qsTr("已自动识别 %1，正在等待检测服务就绪…")
+                    .arg(detectedProcess.text)
+            }
+            return qsTr("正在自动查找 ModPC；启动后会自动识别。")
+        }
         if (diff.summary !== undefined) return qsTr("对比完成：绿色表示变快，橙色表示变慢。")
         if (hasBaseline) return qsTr("已找到本次热点；修改后再点一次，会自动对比变化。")
-        return qsTr("进入要测的场景后点一下，接下来正常操作游戏即可。")
+        if (detectedProcess.text) {
+            return qsTr("已自动识别 %1；进入要测的场景后点一下即可。")
+                .arg(detectedProcess.text)
+        }
+        return qsTr("已连接 ModPC；进入要测的场景后点一下即可。")
     }
 
     function _diffKindText(kind) {
@@ -86,10 +106,7 @@ Card {
         interval: Math.max(250, Number(root.state.probeIntervalMs || 1500))
         repeat: true
         running: root.visible && root.backend !== null && !root.busy
-                 && (root.state.statusChecked !== true
-                     || (root.state.binAvailable === true
-                         && root.state.reachable !== true))
-        onTriggered: root.backend.refreshTracyStatus()
+        onTriggered: root.backend.refreshPerformanceTarget()
     }
 
     Column {
@@ -111,6 +128,7 @@ Card {
                     font.bold: true
                 }
                 Label {
+                    objectName: "tracyGuideText"
                     Layout.fillWidth: true
                     text: root._guideText()
                     color: root.busy ? Enums.statusLevel.warningColor : Enums.textColor.secondary

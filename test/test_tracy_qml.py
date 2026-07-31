@@ -74,7 +74,7 @@ for name in (
     'performanceOfficialToolsCard', 'performanceProcessCard',
     'performanceProfileCard', 'performanceThresholdCard',
     'performanceProcessSelector', 'performanceCpuChart', 'performanceMemoryChart',
-    'tracyAnalysisCard', 'tracyQuickCaptureButton',
+    'tracyAnalysisCard', 'tracyQuickCaptureButton', 'tracyGuideText',
 ):
     assert page.findChild(QObject, name) is not None, name
 assert page.findChild(QObject, 'tracyDurationSpinBox') is None
@@ -82,8 +82,10 @@ assert page.findChild(QObject, 'tracyFilterInput') is None
 
 tracy_card = page.findChild(QObject, 'tracyAnalysisCard')
 capture_button = page.findChild(QObject, 'tracyQuickCaptureButton')
+guide_text = page.findChild(QObject, 'tracyGuideText')
 assert capture_button.property('text') == '等待 ModPC 启动…'
 assert capture_button.property('enabled') is False
+assert '已自动识别 Minecraft.Windows.exe' in guide_text.property('text')
 ready_state = {{
     'statusChecked': True, 'binAvailable': True, 'reachable': True,
     'busy': False, 'captureSeconds': 10, 'probeIntervalMs': 1500,
@@ -94,6 +96,7 @@ tracy_card.setProperty('state', ready_state)
 app.processEvents()
 assert capture_button.property('text') == '开始检测'
 assert capture_button.property('enabled') is True
+assert '已自动识别 Minecraft.Windows.exe' in guide_text.property('text')
 baseline = {{
     'id': 'capture-1', 'text': '首次检测', 'label': 'before',
     'seconds': 10, 'matchedFunctions': 1,

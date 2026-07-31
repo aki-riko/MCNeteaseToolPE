@@ -163,7 +163,7 @@ class PerformanceBackend(QObject):
         self._tracy.refresh_status()
         self.stateChanged.emit()
 
-    def _refresh_processes(self) -> None:
+    def _refresh_processes(self, *, report_errors: bool = True) -> None:
         if self._sampler is None:
             self._processes = []
             self._selected_pid = 0
@@ -172,7 +172,8 @@ class PerformanceBackend(QObject):
             processes = self._sampler.list_candidates()
         except OSError as error:
             LOGGER.exception("枚举 Minecraft 进程失败")
-            self._emit_result(False, f"枚举 Minecraft 进程失败：{error}")
+            if report_errors:
+                self._emit_result(False, f"枚举 Minecraft 进程失败：{error}")
             return
         self._processes = list(processes)
         available_pids = {item.pid for item in self._processes}
@@ -260,6 +261,14 @@ class PerformanceBackend(QObject):
 
     @Slot()
     def refreshTracyStatus(self) -> None:
+        self._tracy.refresh_status()
+        self.stateChanged.emit()
+
+    @Slot()
+    def refreshPerformanceTarget(self) -> None:
+        """持续刷新 ModPC 进程和 Tracy 状态，自动跟随晚启动或重启。"""
+        if not self._monitoring:
+            self._refresh_processes(report_errors=False)
         self._tracy.refresh_status()
         self.stateChanged.emit()
 
