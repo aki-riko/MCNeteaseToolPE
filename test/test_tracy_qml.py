@@ -75,6 +75,7 @@ for name in (
     'performanceProfileCard', 'performanceThresholdCard',
     'performanceProcessSelector', 'performanceCpuChart', 'performanceMemoryChart',
     'tracyAnalysisCard', 'tracyQuickCaptureButton', 'tracyGuideText',
+    'tracyReportSection', 'tracyReportTitle', 'tracyReportConclusion',
 ):
     assert page.findChild(QObject, name) is not None, name
 assert page.findChild(QObject, 'tracyDurationSpinBox') is None
@@ -83,6 +84,9 @@ assert page.findChild(QObject, 'tracyFilterInput') is None
 tracy_card = page.findChild(QObject, 'tracyAnalysisCard')
 capture_button = page.findChild(QObject, 'tracyQuickCaptureButton')
 guide_text = page.findChild(QObject, 'tracyGuideText')
+report_section = page.findChild(QObject, 'tracyReportSection')
+report_title = page.findChild(QObject, 'tracyReportTitle')
+report_conclusion = page.findChild(QObject, 'tracyReportConclusion')
 assert capture_button.property('text') == '等待 ModPC 启动…'
 assert capture_button.property('enabled') is False
 assert '已自动识别 Minecraft.Windows.exe' in guide_text.property('text')
@@ -104,9 +108,23 @@ baseline = {{
 ready_state['captures'] = [baseline]
 ready_state['selectedCaptureId'] = 'capture-1'
 ready_state['baselineCaptureId'] = 'capture-1'
+ready_state['report'] = {{
+    'kind': 'capture', 'title': '本次检测总结',
+    'verdict': '检测完成', 'tone': 'info',
+    'conclusion': '主要热点是 update @ Demo。',
+    'metrics': [{{'label': '采样时长', 'value': '10 秒'}}],
+    'highlights': [{{
+        'kind': 'hotspot', 'name': 'update @ Demo',
+        'detail': '自身 20.000 ms · 调用 10 次',
+    }}],
+    'recommendations': ['优先检查 update @ Demo。'],
+}}
 tracy_card.setProperty('state', ready_state)
 app.processEvents()
 assert capture_button.property('text') == '再次检测并对比'
+assert report_section.property('visible') is True
+assert report_title.property('text') == '本次检测总结'
+assert report_conclusion.property('text') == '主要热点是 update @ Demo。'
 ready_state['busy'] = True
 tracy_card.setProperty('state', ready_state)
 app.processEvents()

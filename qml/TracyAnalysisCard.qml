@@ -15,6 +15,10 @@ Card {
     readonly property var captures: state.captures || []
     readonly property var hotspots: state.hotspots || []
     readonly property var diff: state.diff || ({})
+    readonly property var report: state.report || ({})
+    readonly property var reportMetrics: report.metrics || []
+    readonly property var reportHighlights: report.highlights || []
+    readonly property var reportRecommendations: report.recommendations || []
     readonly property bool ready: state.binAvailable === true && state.reachable === true
     readonly property bool busy: state.busy === true
     readonly property bool hasBaseline: String(state.baselineCaptureId || "") !== ""
@@ -102,6 +106,20 @@ Card {
         return Enums.statusLevel.info
     }
 
+    function _reportToneStatus(tone) {
+        if (tone === "success") return Enums.statusLevel.success
+        if (tone === "warning") return Enums.statusLevel.warning
+        return Enums.statusLevel.info
+    }
+
+    function _reportKindText(kind) {
+        if (kind === "regressed") return qsTr("变慢")
+        if (kind === "improved") return qsTr("变快")
+        if (kind === "added") return qsTr("新增")
+        if (kind === "removed") return qsTr("消失")
+        return qsTr("热点")
+    }
+
     Timer {
         interval: Math.max(250, Number(root.state.probeIntervalMs || 1500))
         repeat: true
@@ -143,6 +161,112 @@ Card {
                 style: Enums.button.style_filled
                 enabled: root.ready && !root.busy && root.backend !== null
                 onClicked: root.backend.captureTracyQuick()
+            }
+        }
+
+        Separator {
+            width: parent ? parent.width : 0
+            visible: String(root.report.title || "") !== ""
+        }
+
+        Column {
+            objectName: "tracyReportSection"
+            width: parent ? parent.width : 0
+            spacing: Enums.spacing.m
+            visible: String(root.report.title || "") !== ""
+
+            RowLayout {
+                width: parent ? parent.width : 0
+                spacing: Enums.spacing.m
+                Label {
+                    objectName: "tracyReportTitle"
+                    Layout.fillWidth: true
+                    text: root.report.title || ""
+                    font.pixelSize: Enums.typography.subtitle
+                    font.bold: true
+                }
+                Tag {
+                    text: root.report.verdict || qsTr("检测完成")
+                    status: root._reportToneStatus(root.report.tone || "info")
+                }
+            }
+
+            Label {
+                objectName: "tracyReportConclusion"
+                width: parent ? parent.width : 0
+                text: root.report.conclusion || ""
+                color: Enums.textColor.primary
+                font.bold: true
+                wrapMode: Text.WordWrap
+            }
+
+            Flow {
+                width: parent ? parent.width : 0
+                height: childrenRect.height
+                spacing: Enums.spacing.s
+                Tag {
+                    visible: Boolean(root.detectedProcess.text)
+                    text: qsTr("进程：%1").arg(root.detectedProcess.text || "")
+                    status: Enums.statusLevel.info
+                }
+                Repeater {
+                    model: root.reportMetrics
+                    delegate: Tag {
+                        required property var modelData
+                        text: modelData.label + qsTr("：") + modelData.value
+                        status: Enums.statusLevel.info
+                    }
+                }
+            }
+
+            Column {
+                width: parent ? parent.width : 0
+                spacing: Enums.spacing.xs
+                visible: root.reportHighlights.length > 0
+                Label { text: qsTr("优先关注"); font.bold: true }
+                Repeater {
+                    model: root.reportHighlights
+                    delegate: RowLayout {
+                        required property var modelData
+                        width: parent ? parent.width : 0
+                        spacing: Enums.spacing.s
+                        Tag {
+                            text: root._reportKindText(modelData.kind)
+                            status: root._diffKindStatus(modelData.kind)
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: modelData.name
+                            wrapMode: Text.NoWrap
+                            elide: Text.ElideMiddle
+                        }
+                        Label {
+                            Layout.preferredWidth: 330
+                            text: modelData.detail
+                            color: Enums.textColor.secondary
+                            horizontalAlignment: Text.AlignRight
+                            wrapMode: Text.NoWrap
+                            elide: Text.ElideLeft
+                        }
+                    }
+                }
+            }
+
+            Column {
+                width: parent ? parent.width : 0
+                spacing: Enums.spacing.xxs
+                visible: root.reportRecommendations.length > 0
+                Label { text: qsTr("下一步建议"); font.bold: true }
+                Repeater {
+                    model: root.reportRecommendations
+                    delegate: Label {
+                        required property var modelData
+                        width: parent ? parent.width : 0
+                        text: qsTr("• %1").arg(modelData)
+                        color: Enums.textColor.secondary
+                        wrapMode: Text.WordWrap
+                    }
+                }
             }
         }
 

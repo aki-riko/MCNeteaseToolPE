@@ -423,6 +423,11 @@ def test_performance_page_is_registered_and_declares_fidelity_boundary() -> None
         "结果用于本机优化，不等于网易机审成绩",
         "backend.captureTracyQuick()",
         "backend.refreshPerformanceTarget()",
+        'objectName: "tracyReportSection"',
+        'objectName: "tracyReportTitle"',
+        'objectName: "tracyReportConclusion"',
+        'qsTr("优先关注")',
+        'qsTr("下一步建议")',
     ):
         assert contract in tracy_source
     for removed_control in (

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
+from datetime import datetime
 
 from .config import TRACY_CAPTURE_SECONDS, TRACY_PROBE_INTERVAL_MS
 from .tracy_analysis import (
@@ -16,6 +17,7 @@ from .tracy_analysis import (
     diff_tracy_captures,
     probe_tracy,
 )
+from .tracy_report import build_capture_report, build_comparison_report
 
 
 LOGGER = logging.getLogger(__name__)
@@ -51,6 +53,7 @@ class TracyPerformanceController:
         self._baseline_capture_id = ""
         self._comparison_capture_id = ""
         self._diff: dict[str, object] = {}
+        self._report: dict[str, object] = {}
 
     @staticmethod
     def _empty_status() -> dict[str, object]:
@@ -77,6 +80,7 @@ class TracyPerformanceController:
             "comparisonCaptureId": self._comparison_capture_id,
             "hotspots": self._selected_hotspots(),
             "diff": dict(self._diff),
+            "report": dict(self._report),
         }
 
     def refresh_status(self) -> None:
@@ -217,7 +221,13 @@ class TracyPerformanceController:
     def _store_capture(self, capture: dict[str, object], label: str) -> dict[str, object]:
         self._sequence += 1
         capture_id = f"capture-{self._sequence}"
-        capture.update({"captureId": capture_id, "label": label})
+        capture.update(
+            {
+                "captureId": capture_id,
+                "label": label,
+                "capturedAt": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
         self._captures[capture_id] = capture
         self._capture_order.append(capture_id)
         self._trim_captures()
@@ -225,9 +235,13 @@ class TracyPerformanceController:
         if label == "before":
             self._baseline_capture_id = capture_id
             self._diff = {}
+            self._report = build_capture_report(capture)
         else:
             self._comparison_capture_id = capture_id
-            self._calculate_diff(str(capture.get("filter", "")), emit_error=False)
+            if not self._calculate_diff(
+                str(capture.get("filter", "")), emit_error=False
+            ):
+                self._report = build_capture_report(capture)
         return capture
 
     def _emit_capture_result(self, capture: dict[str, object], label: str) -> None:
@@ -317,6 +331,7 @@ class TracyPerformanceController:
             if emit_error:
                 self._emit_result(False, str(error))
             return False
+        self._report = build_comparison_report(new, self._diff)
         return True
 
     def clear(self) -> None:
@@ -329,6 +344,7 @@ class TracyPerformanceController:
         self._baseline_capture_id = ""
         self._comparison_capture_id = ""
         self._diff = {}
+        self._report = {}
         self._state_changed()
 
     def _capture_summaries(self) -> list[dict[str, object]]:

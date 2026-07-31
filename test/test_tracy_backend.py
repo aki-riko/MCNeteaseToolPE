@@ -97,12 +97,18 @@ def test_controller_quick_capture_uses_defaults_and_automatic_labels(
     assert scheduled[0] == (7, "", 25)
     handles[0].succeeded.emit(_capture_payload(20.0, seconds=7))
     assert controller.state["baselineCaptureId"] == "capture-1"
+    assert controller.state["report"]["kind"] == "capture"
 
     controller.quick_capture()
     assert scheduled[1] == (7, "", 25)
     handles[1].succeeded.emit(_capture_payload(8.0, seconds=7))
     assert controller.state["comparisonCaptureId"] == "capture-2"
     assert controller.state["diff"]["summary"]["deltaMs"] == -12.0
+    assert controller.state["report"]["kind"] == "comparison"
+    assert controller.state["report"]["verdict"] == "已有改善"
+
+    controller.clear()
+    assert controller.state["report"] == {}
 
 
 def test_controller_captures_baseline_and_builds_diff(monkeypatch) -> None:
