@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// 面向日常优化的一键 Tracy 与原生 Windows/GPU/DirectX 指标检测卡片。
+// 面向日常优化的一键 Tracy 与 AirPerf 协议兼容采集卡片。
 import QtQuick
 import QtQuick.Layouts
 import PrismQML
@@ -79,12 +79,12 @@ Card {
     }
 
     function _guideText() {
-        if (stopRequested) return qsTr("原生性能采集已停止，正在完成当前 Tracy 窗口并汇总报告。")
+        if (stopRequested) return qsTr("AirPerf 采集已停止，正在完成当前 Tracy 窗口并汇总报告。")
         if (continuousActive) {
             if (airperfState.status === "failed") {
-                return qsTr("Tracy 与进程性能持续监测中；%1").arg(airperfState.message || qsTr("原生采集不可用"))
+                return qsTr("Tracy 与进程性能持续监测中；%1").arg(airperfState.message || qsTr("AirPerf 采集不可用"))
             }
-            return qsTr("Tracy 与原生系统/GPU/DirectX 指标持续监测中，已完成 %1 个窗口；退出 MC 会自动停止。")
+            return qsTr("Tracy 与 AirPerf 系统/GPU/DirectX 指标持续监测中，已完成 %1 个窗口；退出 MC 会自动停止。")
                 .arg(windowsCompleted)
         }
         if (state.statusChecked !== true) return qsTr("正在检查检测环境…")

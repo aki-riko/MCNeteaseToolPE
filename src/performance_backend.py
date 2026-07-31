@@ -10,8 +10,8 @@ from typing import Callable
 
 from PySide6.QtCore import QObject, Property, QProcess, QTimer, Signal, Slot
 
+from .airperf_backend import AirPerfMonitor
 from .config import TRACY_PROBE_INTERVAL_MS
-from .native_performance_monitor import NativePerformanceMonitor
 from .performance_monitor import MCSTUDIO_ROOT_ENV, PerformanceToolLocator, ProcessDescriptor
 from .performance_monitor import ProcessSample, WindowsProcessSampler
 from .performance_snippets import (
@@ -105,11 +105,8 @@ class PerformanceBackend(QObject):
             probe=tracy_probe,
             capture_runner=tracy_capture_runner,
         )
-        self._native_monitor_enabled = airperf_monitor is not None or isinstance(
-            self._sampler,
-            WindowsProcessSampler,
-        )
-        self._airperf = airperf_monitor or NativePerformanceMonitor(self.stateChanged.emit)
+        self._airperf_monitor_injected = airperf_monitor is not None
+        self._airperf = airperf_monitor or AirPerfMonitor(self.stateChanged.emit)
         self._timer = QTimer(self)
         self._timer.setInterval(SAMPLE_INTERVAL_MS)
         self._timer.timeout.connect(self._sample_selected_process)
@@ -333,7 +330,11 @@ class PerformanceBackend(QObject):
         self._sample_number = 0
 
     def _start_airperf_monitoring(self) -> None:
-        if not self._native_monitor_enabled:
+        tools = self._discovery.get("tools", {})
+        airperf = tools.get("airperf", {}) if isinstance(tools, dict) else {}
+        available = isinstance(airperf, dict) and bool(airperf.get("available"))
+        if not self._airperf_monitor_injected and not available:
+            self._airperf.mark_unavailable("未找到方块易测 AirPerf 运行组件")
             return
         root_value = str(self._discovery.get("root", "")).strip()
         target = next(

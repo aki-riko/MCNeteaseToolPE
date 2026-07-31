@@ -12,8 +12,15 @@ import zlib
 
 import pytest
 
-from src.airperf_backend import AirPerfSession
+from src.airperf_backend import (
+    AirPerfGraphicsAccumulator,
+    AirPerfMonitor,
+    AirPerfSession,
+    build_airperf_report_metrics,
+)
 from src.airperf_protocol import (
+    APHOST_RPC_SIGNATURES,
+    APHOST_RPC_SURFACE,
     AirPerfProtocol,
     AirPerfProtocolError,
     AirPerfRpcError,
@@ -26,10 +33,6 @@ from src.airperf_runtime import (
     CARCHIVE_MAGIC,
     extract_aphost_runtime,
     find_airperf_libzmq,
-)
-from src.native_performance_monitor import (
-    NativePerformanceMonitor as AirPerfMonitor,
-    build_native_report_metrics as build_airperf_report_metrics,
 )
 
 
@@ -101,6 +104,73 @@ def test_protocol_rejects_rpc_failure_and_invalid_response() -> None:
         decode_response(b"not-json")
     with pytest.raises(AirPerfProtocolError, match="缺少 isOk"):
         decode_response(b'{"return":1}')
+
+
+def test_protocol_wraps_reversed_rpc_surface() -> None:
+    transport = _FakeTransport(b'{"isOk":true,"return":true}')
+    protocol = AirPerfProtocol(transport=transport)
+
+    assert protocol.hook_process(4242) is True
+    request = json.loads(transport.requests[-1].decode("utf-8"))
+
+    assert request == {
+        "cmd": "DxHooker___injectProcessWithDll",
+        "parameter": [4242],
+    }
+    assert set(APHOST_RPC_SURFACE) == {
+        "DxHooker",
+        "Profiler",
+        "PerfmonUtil",
+        "ProcessUtil",
+        "ScreenshotUtil",
+        "ServerUtil",
+        "SystemInfoUtil",
+    }
+    assert sum(map(len, APHOST_RPC_SURFACE.values())) == 23
+    assert sum(map(len, APHOST_RPC_SIGNATURES.values())) == 23
+
+
+def test_protocol_decodes_verified_method_name_and_arity_format() -> None:
+    transport = _FakeTransport(
+        b'{"isOk":true,"return":["get_data%%4","get_counter%%1","Equals%%1"]}'
+    )
+    protocol = AirPerfProtocol(transport=transport)
+
+    assert protocol.get_method_signatures("Profiler") == [
+        ("get_data", 4),
+        ("get_counter", 1),
+        ("Equals", 1),
+    ]
+    assert protocol.get_methods("Profiler") == ["get_data", "get_counter", "Equals"]
+
+
+def test_graphics_accumulator_matches_official_second_bucket_formula() -> None:
+    accumulator = AirPerfGraphicsAccumulator()
+    timestamps = [
+        1_000_000_000,
+        1_016_000_000,
+        1_032_000_000,
+        1_048_000_000,
+        1_198_000_000,
+        2_000_000_000,
+    ]
+    raw_frames = [
+        {
+            "timestamp": timestamp,
+            "drawCallCount": index * 10,
+            "trangleCount": index * 100,
+        }
+        for index, timestamp in enumerate(timestamps, start=1)
+    ]
+
+    sample = accumulator.feed(raw_frames)
+
+    assert sample["frameAverageFps"] == pytest.approx(20.202020, rel=1e-5)
+    assert sample["frameDrawCalls"] == 10.0
+    assert sample["frameTriangleCount"] == 100.0
+    assert sample["frameJankCount"] == 0.0
+    assert sample["frameBigJankCount"] == 1.0
+    assert sample["frameTimeMaxMs"] == 150.0
 
 
 def _build_carchive(path: Path, files: dict[str, bytes]) -> None:
@@ -223,7 +293,7 @@ def test_monitor_collects_constant_space_summary_until_manual_stop() -> None:
     assert state["status"] == "complete"
     assert state["sampleCount"] >= 2
     assert state["summary"]["systemCpuPercent"]["maximum"] >= 20
-    assert any(item["label"] == "原生 GPU 峰值" for item in state["metrics"])
+    assert any(item["label"] == "AirPerf GPU 峰值" for item in state["metrics"])
     assert changes
 
 
@@ -233,8 +303,8 @@ def test_report_metrics_skip_unavailable_indicators() -> None:
         3,
     )
     assert metrics == [
-        {"label": "原生采样", "value": "3"},
-        {"label": "原生 GPU 温度峰值", "value": "61.5 °C"},
+        {"label": "AirPerf 采样", "value": "3"},
+        {"label": "AirPerf GPU 温度峰值", "value": "61.5 °C"},
     ]
 
 
@@ -244,5 +314,5 @@ def test_monitor_reports_unavailable_backend_in_unified_metrics() -> None:
     assert monitor.state["status"] == "failed"
     assert monitor.state["message"] == "Windows PDH 不可用"
     assert monitor.state["metrics"] == [
-        {"label": "原生采集状态", "value": "采集不可用"},
+        {"label": "AirPerf 状态", "value": "采集不可用"},
     ]

@@ -38,7 +38,7 @@ MCNeteaseToolPE 面向网易 MC 中国版的地图与组件开发者,在提交�
   闸门控制台等 JSON。保存必须在世界关闭时执行；工具会先完整备份 `db` 目录，校验
   LevelDB sequence 与内容指纹，再追加 WAL 并重读验证，失败时自动回滚。
 - **📈 性能诊断**：自动识别 ModPC/Minecraft，进入游戏自动开始、退出自动停止；统一持续
-  采集进程 CPU/内存、ModPC 内嵌 Tracy 热点，以及本项目原生后端提供的系统、GPU、磁盘、
+  采集进程 CPU/内存、ModPC 内嵌 Tracy 热点，以及 AirPerf 本地协议提供的系统、GPU、磁盘、
   进程 IO 和 DirectX 帧指标，手动停止或游戏退出后生成整段会话报告。
 
 ## 🚀 基于 PrismQML 引擎
@@ -87,10 +87,11 @@ Minecraft 数据目录。
 
 ## 📈 性能诊断
 
-“性能诊断”不启动 Tracy GUI 或 AirPerf GUI。程序直接连接 ModPC 内嵌 Tracy；系统、磁盘和
-进程指标直接调用 Windows PDH，NVIDIA GPU 指标直接调用系统 NVML/NVAPI，帧指标由本项目的
-`native_frame_capture.dll` 消费 DXGI/D3D9 ETW Present 事件。默认运行路径不再查找、解包或
-启动 `airperf_service.exe`、`aphost.exe`，也不加载 AirPerf 自带 `libzmq`。
+“性能诊断”不启动 Tracy GUI 或 AirPerf GUI。程序直接连接 ModPC 内嵌 Tracy，并使用本项目
+还原的 AirPerf `Class___method` / `{isOk, return}` 本地 NetMQ RPC 客户端。运行时只从已安装的
+`airperf_service.exe` 按目标进程位数解出官方 `aphost` 采集组件，直接调用其 Processor、Memory、
+Process、GPU、PhysicalDisk 与 DirectX 接口；不启动 AirPerf GUI，不需要账号，也不加载 AirPerf
+自带 Python 运行时。
 程序按显式环境变量、`PATH`、Windows 程序目录的顺序查找 MCStudio；非标准安装位置可用
 `MCNETEASE_MCSTUDIO_ROOT` 指定，例如：
 
@@ -99,11 +100,10 @@ $env:MCNETEASE_MCSTUDIO_ROOT = "MCSTUDIO_ROOT"
 & ".\.venv\Scripts\python.exe" main.py
 ```
 
-本地曲线和完整会话指标均通过 Windows/显卡驱动原生 API 读取，不需要安装 `psutil`、
-`pyzmq` 或 OpenHardwareMonitor。原生帧采集目录可用 `MCNETEASE_NATIVE_METRICS_DIR` 覆盖，
-采样间隔可用 `MCNETEASE_NATIVE_SAMPLE_INTERVAL_MS` 覆盖。
-跨进程 ETW 会话受 Windows 权限控制；若当前令牌不能创建会话，其余 21 项指标和 Tracy 报告
-仍会继续生成，并在状态中明确显示 DirectX ETW 不可用。CPU/内存
+AirPerf RPC 通过客户端随附的 `libzmq` C ABI 通信，不需要安装 `pyzmq`。解包缓存目录可用
+`MCNETEASE_AIRPERF_RUNTIME_DIR` 覆盖，采样间隔可用 `MCNETEASE_AIRPERF_SAMPLE_INTERVAL_MS`
+覆盖；`MCNETEASE_AIRPERF_GRAPHICS_ENABLED=0` 可仅在诊断时关闭 DirectX 挂接。DirectX 挂接
+不可用时，其余 AirPerf 指标与 Tracy 报告仍会继续生成，并在状态中明确显示降级原因。CPU/内存
 火焰图按钮复制网易公开的 `StartProfile`/`StopProfile` 与
 `StartMemProfile`/`StopMemProfile` 调试脚本，生成的 SVG 位于 ModPC 目录；提审前必须
 移除项目中的诊断调用。
@@ -111,8 +111,8 @@ $env:MCNETEASE_MCSTUDIO_ROOT = "MCSTUDIO_ROOT"
 函数热点卡片不经过 MCP，直接连接本机 ModPC 内嵌的 Tracy TCP 端点，并调用随程序分发的
 Tracy v0.11.1 `tracy-capture` 与 `tracy-csvexport`。默认端点来自配置，可用
 `MCNETEASE_TRACY_HOST` 和 `MCNETEASE_TRACY_PORT` 覆盖；主机仅接受回环地址。CLI 目录可用
-`MCNETEASE_TRACY_BIN_DIR` 覆盖，也兼容上游的 `TRACY_BIN_DIR`。界面只需使用同一个主按钮：
-第一次采集基线，修改后再次点击便会自动采集复测并生成对比；“重新开始”可更换采样时长和基线。
+`MCNETEASE_TRACY_BIN_DIR` 覆盖，也兼容上游的 `TRACY_BIN_DIR`。界面只保留一个主按钮；开始后
+连续抓取窗口，直到手动停止或检测到游戏退出，再统一归约整段会话。
 采集时应持续触发真实玩法负载，
 基线与复测必须使用同一设备、同一场景和相同时长；页面显示的是采样窗口内 `Frames / seconds`
 平均值，不等于网易手机集群 p1/p5 或机审平均帧率。

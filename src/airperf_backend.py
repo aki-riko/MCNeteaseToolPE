@@ -23,11 +23,13 @@ from .airperf_runtime import (
     process_architecture,
 )
 from .config import (
+    AIRPERF_GRAPHICS_ENABLED,
     AIRPERF_HOST,
     AIRPERF_RPC_TIMEOUT_MS,
     AIRPERF_SAMPLE_INTERVAL_MS,
     AIRPERF_START_TIMEOUT_MS,
 )
+from .airperf_graphics import AirPerfGraphicsAccumulator
 
 
 LOGGER = logging.getLogger(__name__)
@@ -111,6 +113,10 @@ class _ProtocolLike(Protocol):
 
     def get_data(self, category: str, counter: str, instance: str, host: str = "") -> object: ...
 
+    def hook_process(self, pid: int) -> bool: ...
+
+    def get_directx_data(self, pid: int) -> list[dict[str, object]]: ...
+
     def remove_counter(self, key: str) -> object: ...
 
     def close(self) -> None: ...
@@ -140,6 +146,13 @@ class AirPerfSession:
         self._host_port = 0
         self._process_instance = ""
         self._active_specs: list[_CounterSpec] = []
+        self._graphics = AirPerfGraphicsAccumulator()
+        self._graphics_active = False
+        self._warnings: list[str] = []
+
+    @property
+    def warnings(self) -> tuple[str, ...]:
+        return tuple(self._warnings)
 
     def open(self) -> None:
         architecture = self._architecture_provider(self._pid)
@@ -162,6 +175,21 @@ class AirPerfSession:
         self._process_instance = self._resolve_process_instance()
         self._active_specs = self._resolved_specs()
         self._prime_counters()
+        self._start_graphics_capture()
+
+    def _start_graphics_capture(self) -> None:
+        if not AIRPERF_GRAPHICS_ENABLED or self._protocol is None:
+            return
+        try:
+            if not self._protocol.hook_process(self._pid):
+                raise AirPerfProtocolError("aphost 未能挂接目标进程")
+            self._protocol.get_directx_data(self._pid)
+        except (AirPerfProtocolError, OSError, TimeoutError) as error:
+            message = f"DirectX：{error}"
+            LOGGER.info("AirPerf %s", message)
+            self._warnings.append(message)
+            return
+        self._graphics_active = True
 
     def _host_ready(self) -> bool:
         try:
@@ -233,6 +261,14 @@ class AirPerfSession:
             value = self._protocol.get_data(spec.category, spec.counter, spec.instance)
             if isinstance(value, (int, float)):
                 sample[spec.key] = round(float(value) / spec.divisor, 4)
+        if self._graphics_active:
+            try:
+                sample.update(self._graphics.feed(self._protocol.get_directx_data(self._pid)))
+            except (AirPerfProtocolError, OSError, TimeoutError) as error:
+                self._graphics_active = False
+                message = f"DirectX：{error}"
+                LOGGER.warning("AirPerf 帧采集降级：%s", error)
+                self._warnings.append(message)
         return sample
 
     def close(self) -> None:
@@ -262,10 +298,7 @@ class AirPerfSession:
 
 
 class AirPerfMonitor:
-    """后台持续采样原生指标，并只保留常量空间的统计摘要。
-
-    类名为兼容既有 QML 状态键暂时保留；默认运行路径不再调用 AirPerf。
-    """
+    """后台持续采样逆向还原的 AirPerf 指标并保留常量空间摘要。"""
 
     def __init__(
         self,
@@ -275,9 +308,7 @@ class AirPerfMonitor:
     ) -> None:
         self._changed = changed
         if session_factory is None:
-            from .native_performance import NativePerformanceSession
-
-            session_factory = NativePerformanceSession
+            session_factory = AirPerfSession
         self._session_factory = session_factory
         self._interval_seconds = interval_ms / 1000.0
         self._lock = threading.Lock()
@@ -289,6 +320,7 @@ class AirPerfMonitor:
         self._sample_count = 0
         self._latest: dict[str, float] = {}
         self._stats: dict[str, _MetricStats] = {}
+        self._warnings: list[str] = []
 
     @property
     def state(self) -> dict[str, object]:
@@ -296,7 +328,9 @@ class AirPerfMonitor:
             summary = {key: stat.payload() for key, stat in self._stats.items()}
             metrics = build_airperf_report_metrics(summary, self._sample_count)
             if self._status == "failed":
-                metrics.append({"label": "原生采集状态", "value": "采集不可用"})
+                metrics.append({"label": "AirPerf 状态", "value": "采集不可用"})
+            if self._warnings:
+                metrics.append({"label": "AirPerf 降级", "value": "；".join(self._warnings)})
             return {
                 "active": self._active,
                 "status": self._status,
@@ -305,19 +339,21 @@ class AirPerfMonitor:
                 "latest": dict(self._latest),
                 "summary": summary,
                 "metrics": metrics,
+                "warnings": list(self._warnings),
             }
 
     def start(self, mcstudio_root: Path, pid: int, process_name: str) -> bool:
         with self._lock:
-            if self._active:
+            if self._active or (self._thread is not None and self._thread.is_alive()):
                 return False
             self._stop_event = threading.Event()
             self._active = True
             self._status = "starting"
-            self._message = "正在启动原生 Windows 性能采集"
+            self._message = "正在启动 AirPerf 兼容采集"
             self._sample_count = 0
             self._latest = {}
             self._stats = {}
+            self._warnings = []
         arguments = (Path(mcstudio_root), int(pid), process_name, self._stop_event)
         self._thread = threading.Thread(target=self._run, args=arguments, name="airperf-monitor", daemon=True)
         self._thread.start()
@@ -328,8 +364,9 @@ class AirPerfMonitor:
         with self._lock:
             if not self._active:
                 return
+            self._active = False
             self._status = "stopping"
-            self._message = "正在停止原生性能采集"
+            self._message = "正在停止 AirPerf 兼容采集"
             self._stop_event.set()
         self._changed()
 
@@ -341,28 +378,34 @@ class AirPerfMonitor:
         try:
             session = self._session_factory(root, pid, name)
             session.open()  # type: ignore[attr-defined]
-            self._set_running()
+            self._set_running(session)
             while not stop_event.wait(self._interval_seconds):
-                self._record(session.sample())  # type: ignore[attr-defined]
+                sample = session.sample()  # type: ignore[attr-defined]
+                self._sync_session_warnings(session)
+                self._record(sample)
         except (AirPerfProtocolError, OSError, ProcessLookupError, TimeoutError, ValueError) as error:
-            LOGGER.warning("原生持续采集结束：%s", error)
-            self._finish("failed", f"原生性能采集不可用：{error}")
+            LOGGER.warning("AirPerf 持续采集结束：%s", error)
+            self._finish("failed", f"AirPerf 兼容采集不可用：{error}")
         except Exception as error:
-            LOGGER.exception("原生持续采集发生未预期错误")
-            self._finish("failed", f"原生性能采集失败：{error}")
+            LOGGER.exception("AirPerf 持续采集发生未预期错误")
+            self._finish("failed", f"AirPerf 兼容采集失败：{error}")
         else:
-            self._finish("complete", "原生性能采集已完成")
+            self._finish("complete", "AirPerf 兼容采集已完成")
         finally:
             if session is not None:
                 try:
                     session.close()  # type: ignore[attr-defined]
                 except (AirPerfProtocolError, OSError, TimeoutError):
-                    LOGGER.exception("关闭原生性能采集会话失败")
+                    LOGGER.exception("关闭 AirPerf 采集会话失败")
 
-    def _set_running(self) -> None:
+    def _set_running(self, session: object | None = None) -> None:
+        warnings = [str(item) for item in getattr(session, "warnings", ())]
         with self._lock:
             self._status = "monitoring"
-            self._message = "Windows、GPU、磁盘与进程原生指标采集中"
+            self._warnings = warnings
+            self._message = "AirPerf 系统、GPU、磁盘、进程与 DirectX 指标采集中"
+            if warnings:
+                self._message = "AirPerf 其余指标采集中；" + "；".join(warnings)
         self._changed()
 
     def _record(self, sample: dict[str, float]) -> None:
@@ -373,12 +416,40 @@ class AirPerfMonitor:
                 self._stats.setdefault(key, _MetricStats()).add(float(value))
         self._changed()
 
+    def _sync_session_warnings(self, session: object) -> None:
+        warnings = [str(item) for item in getattr(session, "warnings", ())]
+        with self._lock:
+            if warnings == self._warnings:
+                return
+            self._warnings = warnings
+            self._message = "AirPerf 其余指标采集中；" + "；".join(warnings)
+
     def _finish(self, status: str, message: str) -> None:
         with self._lock:
             self._active = False
             self._status = status
             self._message = message
         self._changed()
+
+
+REPORT_METRIC_DEFINITIONS = (
+    ("systemCpuPercent", "average", "系统 CPU 平均", "{:.1f}%"),
+    ("systemCpuPercent", "maximum", "系统 CPU 峰值", "{:.1f}%"),
+    ("systemAvailableMemoryMb", "minimum", "系统可用内存最低", "{:.1f} MB"),
+    ("processPrivateWorkingSetMb", "maximum", "进程私有内存峰值", "{:.1f} MB"),
+    ("gpuUsagePercent", "average", "GPU 平均", "{:.1f}%"),
+    ("gpuUsagePercent", "maximum", "GPU 峰值", "{:.1f}%"),
+    ("gpuTemperatureC", "maximum", "GPU 温度峰值", "{:.1f} °C"),
+    ("gpuMemoryUsedMb", "maximum", "显存占用峰值", "{:.1f} MB"),
+    ("diskTotalPercent", "maximum", "磁盘活动峰值", "{:.1f}%"),
+    ("ioTotalMbPerSec", "maximum", "进程 IO 峰值", "{:.2f} MB/s"),
+    ("frameAverageFps", "average", "平均 FPS", "{:.1f}"),
+    ("frameDrawCalls", "average", "平均 DrawCall", "{:.1f}"),
+    ("frameTriangleCount", "average", "平均三角面", "{:.0f}"),
+    ("frameJankCount", "maximum", "卡顿数", "{:.0f}"),
+    ("frameBigJankCount", "maximum", "严重卡顿数", "{:.0f}"),
+    ("frameTimeMaxMs", "maximum", "帧耗时峰值", "{:.2f} ms"),
+)
 
 
 def build_airperf_report_metrics(
@@ -389,29 +460,22 @@ def build_airperf_report_metrics(
 
     if not sample_count:
         return []
-    metrics = [{"label": "原生采样", "value": str(sample_count)}]
-    definitions = (
-        ("systemCpuPercent", "average", "系统 CPU 平均", "{:.1f}%"),
-        ("systemCpuPercent", "maximum", "系统 CPU 峰值", "{:.1f}%"),
-        ("systemAvailableMemoryMb", "minimum", "系统可用内存最低", "{:.1f} MB"),
-        ("processPrivateWorkingSetMb", "maximum", "进程私有内存峰值", "{:.1f} MB"),
-        ("gpuUsagePercent", "average", "GPU 平均", "{:.1f}%"),
-        ("gpuUsagePercent", "maximum", "GPU 峰值", "{:.1f}%"),
-        ("gpuTemperatureC", "maximum", "GPU 温度峰值", "{:.1f} °C"),
-        ("gpuMemoryUsedMb", "maximum", "显存占用峰值", "{:.1f} MB"),
-        ("diskTotalPercent", "maximum", "磁盘活动峰值", "{:.1f}%"),
-        ("ioTotalMbPerSec", "maximum", "进程 IO 峰值", "{:.2f} MB/s"),
-    )
-    for key, field, label, template in definitions:
+    metrics = [{"label": "AirPerf 采样", "value": str(sample_count)}]
+    for key, field, label, template in REPORT_METRIC_DEFINITIONS:
         payload = summary.get(key)
-        if isinstance(payload, Mapping) and isinstance(payload.get(field), (int, float)):
-            metrics.append({"label": f"原生 {label}", "value": template.format(payload[field])})
+        if isinstance(payload, Mapping) and isinstance(
+            payload.get(field), (int, float)
+        ):
+            metrics.append(
+                {"label": f"AirPerf {label}", "value": template.format(payload[field])}
+            )
     return metrics
 
 
 __all__ = [
     "AIRPERF_SERVICE_NAME",
     "APHOST_PORTS",
+    "AirPerfGraphicsAccumulator",
     "AirPerfMonitor",
     "AirPerfSession",
     "build_airperf_report_metrics",

@@ -19,6 +19,38 @@ ZMQ_LINGER = 17
 ZMQ_RCVTIMEO = 27
 ZMQ_SNDTIMEO = 28
 ZMQ_EAGAIN = 11
+APHOST_RPC_SIGNATURES = {
+    "DxHooker": (
+        ("isWin64Server", 0),
+        ("GetMachineType", 1),
+        ("checkProcess", 1),
+        ("injectProcessWithDll", 1),
+        ("noHook_injectProcessWithDll", 1),
+        ("globalHook_injectProcessWithDll", 1),
+        ("initDxData", 2),
+        ("getDxData", 1),
+    ),
+    "Profiler": (("get_data", 4), ("clear_data", 4), ("get_counter", 1)),
+    "PerfmonUtil": (("removeCounter", 1),),
+    "ProcessUtil": (
+        ("isProcessExists", 1),
+        ("isWin64Process", 1),
+        ("getProcessList", 0),
+        ("runCommand", 3),
+    ),
+    "ScreenshotUtil": (("getHandleByProcessId", 1), ("CaptureScreen", 1)),
+    "ServerUtil": (("checkInitDone", 0),),
+    "SystemInfoUtil": (
+        ("GetHardDiskInfo", 0),
+        ("GetWmiInfo", 0),
+        ("isWin64OS", 0),
+        ("getProcessorCount", 0),
+    ),
+}
+APHOST_RPC_SURFACE = {
+    class_name: tuple(name for name, _arity in signatures)
+    for class_name, signatures in APHOST_RPC_SIGNATURES.items()
+}
 
 
 class AirPerfProtocolError(RuntimeError):
@@ -210,7 +242,7 @@ class CtypesZmqTransport:
 
 
 class AirPerfProtocol:
-    """aphost RPC 的类型安全薄封装。"""
+    """逆向还原的 aphost RPC 客户端接口。"""
 
     def __init__(
         self,
@@ -225,21 +257,135 @@ class AirPerfProtocol:
             Path(dll_path), endpoint, timeout_ms  # type: ignore[arg-type]
         )
 
-    def call(self, class_name: str, method_name: str, arguments: list[object] | None = None) -> object:
+    def call(
+        self,
+        class_name: str,
+        method_name: str,
+        arguments: list[object] | None = None,
+    ) -> object:
         payload = encode_request(class_name, method_name, arguments)
         return decode_response(self._transport.request(payload))
 
+    def get_classes(self) -> list[str]:
+        payload = json.dumps(
+            {"cmd": "getClasses", "parameter": None},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        result = decode_response(self._transport.request(payload))
+        return [str(item) for item in result] if isinstance(result, list) else []
+
+    def get_method_signatures(self, class_name: str) -> list[tuple[str, int]]:
+        result = self.call(class_name, "getMethods")
+        if not isinstance(result, list):
+            return []
+        signatures: list[tuple[str, int]] = []
+        for item in result:
+            name, separator, raw_arity = str(item).rpartition("%%")
+            if not separator or not raw_arity.isdecimal():
+                LOGGER.warning("aphost 返回了无效方法签名：%r", item)
+                continue
+            signatures.append((name, int(raw_arity)))
+        return signatures
+
+    def get_methods(self, class_name: str) -> list[str]:
+        return [name for name, _arity in self.get_method_signatures(class_name)]
+
     def check_init_done(self) -> bool:
         return bool(self.call("ServerUtil", "checkInitDone"))
+
+    def is_process_exists(self, pid: int) -> bool:
+        return bool(self.call("ProcessUtil", "isProcessExists", [int(pid)]))
+
+    def is_win64_process(self, pid: int) -> bool:
+        return bool(self.call("ProcessUtil", "isWin64Process", [int(pid)]))
+
+    def get_process_list(self) -> list[object]:
+        result = self.call("ProcessUtil", "getProcessList")
+        return result if isinstance(result, list) else []
+
+    def run_command(
+        self,
+        executable: str,
+        arguments: str,
+        working_directory: str,
+    ) -> dict[str, object]:
+        result = self.call(
+            "ProcessUtil",
+            "runCommand",
+            [executable, arguments, working_directory],
+        )
+        return result if isinstance(result, dict) else {}
+
+    def get_system_info(self) -> dict[str, object]:
+        result = self.call("SystemInfoUtil", "GetWmiInfo")
+        return result if isinstance(result, dict) else {}
+
+    def get_hard_disk_info(self) -> object:
+        return self.call("SystemInfoUtil", "GetHardDiskInfo")
+
+    def is_win64_os(self) -> bool:
+        return bool(self.call("SystemInfoUtil", "isWin64OS"))
+
+    def get_processor_count(self) -> int:
+        return int(self.call("SystemInfoUtil", "getProcessorCount"))
+
+    def hook_process(self, pid: int) -> bool:
+        return bool(self.call("DxHooker", "injectProcessWithDll", [int(pid)]))
+
+    def is_win64_server(self) -> bool:
+        return bool(self.call("DxHooker", "isWin64Server"))
+
+    def get_machine_type(self, executable: str) -> object:
+        return self.call("DxHooker", "GetMachineType", [executable])
+
+    def check_process(self, pid: int) -> None:
+        self.call("DxHooker", "checkProcess", [int(pid)])
+
+    def hook_process_presentmon(self, pid: int) -> bool:
+        return bool(self.call("DxHooker", "noHook_injectProcessWithDll", [int(pid)]))
+
+    def hook_process_global(self, pid: int) -> bool:
+        return bool(self.call("DxHooker", "globalHook_injectProcessWithDll", [int(pid)]))
+
+    def initialize_directx_data(self, pid: int, source: int) -> object:
+        return self.call("DxHooker", "initDxData", [int(pid), int(source)])
+
+    def get_directx_state(self, pid: int) -> object:
+        return self.call("DxHooker", "getDxData", [int(pid)])
+
+    def get_directx_data(self, pid: int) -> list[dict[str, object]]:
+        result = self.get_data("DirectX_Counters", "Frames", str(int(pid)))
+        if not isinstance(result, list):
+            return []
+        return [dict(item) for item in result if isinstance(item, dict)]
+
+    def get_process_handle(self, pid: int) -> int:
+        return int(self.call("ScreenshotUtil", "getHandleByProcessId", [int(pid)]))
+
+    def capture_screen(self, handle: int) -> str:
+        return str(self.call("ScreenshotUtil", "CaptureScreen", [int(handle)]))
 
     def get_counter(self, category: str) -> dict[str, object]:
         result = self.call("Profiler", "get_counter", [category])
         return result if isinstance(result, dict) else {}
 
-    def get_data(self, category: str, counter: str, instance: str, host: str = "") -> object:
+    def get_data(
+        self,
+        category: str,
+        counter: str,
+        instance: str,
+        host: str = "",
+    ) -> object:
         return self.call("Profiler", "get_data", [host, category, counter, instance])
 
-    def clear_data(self, category: str, counter: str, instance: str, host: str = "") -> object:
+    def clear_data(
+        self,
+        category: str,
+        counter: str,
+        instance: str,
+        host: str = "",
+    ) -> object:
         return self.call("Profiler", "clear_data", [host, category, counter, instance])
 
     def remove_counter(self, key: str) -> object:
@@ -250,6 +396,8 @@ class AirPerfProtocol:
 
 
 __all__ = [
+    "APHOST_RPC_SIGNATURES",
+    "APHOST_RPC_SURFACE",
     "AirPerfProtocol",
     "AirPerfProtocolError",
     "AirPerfRpcError",

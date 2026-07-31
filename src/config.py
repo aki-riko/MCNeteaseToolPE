@@ -28,6 +28,19 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(parsed, maximum))
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalized = value.strip().casefold()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    LOGGER.warning("环境变量 %s 不是有效布尔值，使用默认值", name)
+    return default
+
+
 APP_TITLE = _env("MCNETEASE_APP_TITLE", "我的世界中国版打包工具")
 SPLASH_SUBTITLE = _env("MCNETEASE_SPLASH_SUBTITLE", "正在加载，请稍候…")
 APP_VERSION = _env("MCNETEASE_APP_VERSION", "v0.1.0.5")
@@ -82,6 +95,7 @@ AIRPERF_START_TIMEOUT_MS = _env_int(
 AIRPERF_SAMPLE_INTERVAL_MS = _env_int(
     "MCNETEASE_AIRPERF_SAMPLE_INTERVAL_MS", 1000, 250, 10_000
 )
+AIRPERF_GRAPHICS_ENABLED = _env_bool("MCNETEASE_AIRPERF_GRAPHICS_ENABLED", True)
 NATIVE_PERFORMANCE_SAMPLE_INTERVAL_MS = _env_int(
     "MCNETEASE_NATIVE_SAMPLE_INTERVAL_MS", 1000, 250, 10_000
 )
@@ -185,6 +199,7 @@ __all__ = [
     "AIRPERF_RPC_TIMEOUT_MS",
     "AIRPERF_START_TIMEOUT_MS",
     "AIRPERF_SAMPLE_INTERVAL_MS",
+    "AIRPERF_GRAPHICS_ENABLED",
     "NATIVE_PERFORMANCE_SAMPLE_INTERVAL_MS",
     "LEVEL_DAT_MAX_BYTES",
     "LEVEL_DAT_MAX_DEPTH",
