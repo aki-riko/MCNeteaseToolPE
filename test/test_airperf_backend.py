@@ -223,7 +223,7 @@ def test_monitor_collects_constant_space_summary_until_manual_stop() -> None:
     assert state["status"] == "complete"
     assert state["sampleCount"] >= 2
     assert state["summary"]["systemCpuPercent"]["maximum"] >= 20
-    assert any(item["label"] == "AirPerf GPU 峰值" for item in state["metrics"])
+    assert any(item["label"] == "原生 GPU 峰值" for item in state["metrics"])
     assert changes
 
 
@@ -233,16 +233,16 @@ def test_report_metrics_skip_unavailable_indicators() -> None:
         3,
     )
     assert metrics == [
-        {"label": "AirPerf 采样", "value": "3"},
-        {"label": "AirPerf GPU 温度峰值", "value": "61.5 °C"},
+        {"label": "原生采样", "value": "3"},
+        {"label": "原生 GPU 温度峰值", "value": "61.5 °C"},
     ]
 
 
 def test_monitor_reports_unavailable_backend_in_unified_metrics() -> None:
     monitor = AirPerfMonitor(lambda: None, _FakeSession)
-    monitor.mark_unavailable("未找到 AirPerf 本地服务资源")
+    monitor.mark_unavailable("Windows PDH 不可用")
     assert monitor.state["status"] == "failed"
-    assert monitor.state["message"] == "未找到 AirPerf 本地服务资源"
+    assert monitor.state["message"] == "Windows PDH 不可用"
     assert monitor.state["metrics"] == [
-        {"label": "AirPerf 状态", "value": "采集不可用"},
+        {"label": "原生采集状态", "value": "采集不可用"},
     ]

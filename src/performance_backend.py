@@ -10,7 +10,7 @@ from typing import Callable
 
 from PySide6.QtCore import QObject, Property, QProcess, QTimer, Signal, Slot
 
-from .airperf_backend import AIRPERF_SERVICE_NAME, AirPerfMonitor
+from .airperf_backend import AirPerfMonitor
 from .config import TRACY_PROBE_INTERVAL_MS
 from .performance_monitor import MCSTUDIO_ROOT_ENV, PerformanceToolLocator, ProcessDescriptor
 from .performance_monitor import ProcessSample, WindowsProcessSampler
@@ -104,6 +104,10 @@ class PerformanceBackend(QObject):
             self._emit_result,
             probe=tracy_probe,
             capture_runner=tracy_capture_runner,
+        )
+        self._native_monitor_enabled = airperf_monitor is not None or isinstance(
+            self._sampler,
+            WindowsProcessSampler,
         )
         self._airperf = airperf_monitor or AirPerfMonitor(self.stateChanged.emit)
         self._timer = QTimer(self)
@@ -329,17 +333,14 @@ class PerformanceBackend(QObject):
         self._sample_number = 0
 
     def _start_airperf_monitoring(self) -> None:
+        if not self._native_monitor_enabled:
+            return
         root_value = str(self._discovery.get("root", "")).strip()
         target = next(
             (item for item in self._processes if item.pid == self._selected_pid),
             None,
         )
         if not root_value or target is None:
-            return
-        service = Path(root_value) / "airperf" / AIRPERF_SERVICE_NAME
-        if not service.is_file():
-            LOGGER.info("未找到 AirPerf 本地服务资源，跳过直接指标采集：%s", service)
-            self._airperf.mark_unavailable("未找到 AirPerf 本地服务资源")
             return
         self._airperf.start(Path(root_value), target.pid, target.name)
 

@@ -91,7 +91,7 @@ class _FakeAirPerfMonitor:
             "status": "monitoring" if self._active else "complete",
             "sampleCount": 2,
             "metrics": [
-                {"label": "AirPerf GPU 峰值", "value": "75.0%"},
+                {"label": "原生 GPU 峰值", "value": "75.0%"},
             ],
         }
 
@@ -330,9 +330,6 @@ def test_unified_monitoring_aggregates_direct_airperf_lifecycle_and_report(
     _application()
     handle = _FakeTaskHandle()
     monkeypatch.setattr("prismqml.run_in_pool", lambda _operation, *_args: handle)
-    service = tmp_path / "airperf" / "airperf_service.exe"
-    service.parent.mkdir(parents=True)
-    service.write_bytes(b"service")
     airperf = _FakeAirPerfMonitor()
     backend = PerformanceBackend(
         locator=_FakeLocator(tmp_path),
@@ -354,7 +351,7 @@ def test_unified_monitoring_aggregates_direct_airperf_lifecycle_and_report(
         for item in backend.state["tracy"]["report"]["metrics"]
     }
     assert airperf.stop_calls == 1
-    assert metrics["AirPerf GPU 峰值"] == "75.0%"
+    assert metrics["原生 GPU 峰值"] == "75.0%"
 
 
 def test_default_auto_monitoring_waits_for_new_process_after_manual_stop(

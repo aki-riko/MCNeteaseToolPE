@@ -262,15 +262,22 @@ class AirPerfSession:
 
 
 class AirPerfMonitor:
-    """后台持续采样 AirPerf，并只保留常量空间的统计摘要。"""
+    """后台持续采样原生指标，并只保留常量空间的统计摘要。
+
+    类名为兼容既有 QML 状态键暂时保留；默认运行路径不再调用 AirPerf。
+    """
 
     def __init__(
         self,
         changed: Callable[[], None],
-        session_factory: Callable[[Path, int, str], AirPerfSession] = AirPerfSession,
+        session_factory: Callable[[Path, int, str], object] | None = None,
         interval_ms: int = AIRPERF_SAMPLE_INTERVAL_MS,
     ) -> None:
         self._changed = changed
+        if session_factory is None:
+            from .native_performance import NativePerformanceSession
+
+            session_factory = NativePerformanceSession
         self._session_factory = session_factory
         self._interval_seconds = interval_ms / 1000.0
         self._lock = threading.Lock()
@@ -289,7 +296,7 @@ class AirPerfMonitor:
             summary = {key: stat.payload() for key, stat in self._stats.items()}
             metrics = build_airperf_report_metrics(summary, self._sample_count)
             if self._status == "failed":
-                metrics.append({"label": "AirPerf 状态", "value": "采集不可用"})
+                metrics.append({"label": "原生采集状态", "value": "采集不可用"})
             return {
                 "active": self._active,
                 "status": self._status,
@@ -307,7 +314,7 @@ class AirPerfMonitor:
             self._stop_event = threading.Event()
             self._active = True
             self._status = "starting"
-            self._message = "正在连接 AirPerf 本地采集引擎"
+            self._message = "正在启动原生 Windows 性能采集"
             self._sample_count = 0
             self._latest = {}
             self._stats = {}
@@ -322,7 +329,7 @@ class AirPerfMonitor:
             if not self._active:
                 return
             self._status = "stopping"
-            self._message = "正在停止 AirPerf 采集"
+            self._message = "正在停止原生性能采集"
             self._stop_event.set()
         self._changed()
 
@@ -330,32 +337,32 @@ class AirPerfMonitor:
         self._finish("failed", message)
 
     def _run(self, root: Path, pid: int, name: str, stop_event: threading.Event) -> None:
-        session: AirPerfSession | None = None
+        session: object | None = None
         try:
             session = self._session_factory(root, pid, name)
-            session.open()
+            session.open()  # type: ignore[attr-defined]
             self._set_running()
             while not stop_event.wait(self._interval_seconds):
-                self._record(session.sample())
+                self._record(session.sample())  # type: ignore[attr-defined]
         except (AirPerfProtocolError, OSError, ProcessLookupError, TimeoutError, ValueError) as error:
-            LOGGER.warning("AirPerf 持续采集结束：%s", error)
-            self._finish("failed", f"AirPerf 采集不可用：{error}")
+            LOGGER.warning("原生持续采集结束：%s", error)
+            self._finish("failed", f"原生性能采集不可用：{error}")
         except Exception as error:
-            LOGGER.exception("AirPerf 持续采集发生未预期错误")
-            self._finish("failed", f"AirPerf 采集失败：{error}")
+            LOGGER.exception("原生持续采集发生未预期错误")
+            self._finish("failed", f"原生性能采集失败：{error}")
         else:
-            self._finish("complete", "AirPerf 采集已完成")
+            self._finish("complete", "原生性能采集已完成")
         finally:
             if session is not None:
                 try:
-                    session.close()
+                    session.close()  # type: ignore[attr-defined]
                 except (AirPerfProtocolError, OSError, TimeoutError):
-                    LOGGER.exception("关闭 AirPerf 会话失败")
+                    LOGGER.exception("关闭原生性能采集会话失败")
 
     def _set_running(self) -> None:
         with self._lock:
             self._status = "monitoring"
-            self._message = "AirPerf 系统、GPU、磁盘与进程指标采集中"
+            self._message = "Windows、GPU、磁盘与进程原生指标采集中"
         self._changed()
 
     def _record(self, sample: dict[str, float]) -> None:
@@ -382,7 +389,7 @@ def build_airperf_report_metrics(
 
     if not sample_count:
         return []
-    metrics = [{"label": "AirPerf 采样", "value": str(sample_count)}]
+    metrics = [{"label": "原生采样", "value": str(sample_count)}]
     definitions = (
         ("systemCpuPercent", "average", "系统 CPU 平均", "{:.1f}%"),
         ("systemCpuPercent", "maximum", "系统 CPU 峰值", "{:.1f}%"),
@@ -398,7 +405,7 @@ def build_airperf_report_metrics(
     for key, field, label, template in definitions:
         payload = summary.get(key)
         if isinstance(payload, Mapping) and isinstance(payload.get(field), (int, float)):
-            metrics.append({"label": f"AirPerf {label}", "value": template.format(payload[field])})
+            metrics.append({"label": f"原生 {label}", "value": template.format(payload[field])})
     return metrics
 
 
