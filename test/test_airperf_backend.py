@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 import struct
@@ -34,6 +35,21 @@ from src.airperf_runtime import (
     extract_aphost_runtime,
     find_airperf_libzmq,
 )
+def _load_airperf_graphics_flag() -> bool:
+    config_path = Path(__file__).resolve().parents[1] / "src" / "config.py"
+    spec = importlib.util.spec_from_file_location("airperf_config_test", config_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return bool(module.AIRPERF_GRAPHICS_ENABLED)
+
+
+def test_directx_injection_is_opt_in(monkeypatch) -> None:
+    monkeypatch.delenv("MCNETEASE_AIRPERF_GRAPHICS_ENABLED", raising=False)
+    assert _load_airperf_graphics_flag() is False
+
+    monkeypatch.setenv("MCNETEASE_AIRPERF_GRAPHICS_ENABLED", "1")
+    assert _load_airperf_graphics_flag() is True
 
 
 class _FakeTransport:

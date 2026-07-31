@@ -84,7 +84,7 @@ Card {
             if (airperfState.status === "failed") {
                 return qsTr("Tracy 与进程性能持续监测中；%1").arg(airperfState.message || qsTr("AirPerf 采集不可用"))
             }
-            return qsTr("Tracy 与 AirPerf 系统/GPU/DirectX 指标持续监测中，已完成 %1 个窗口；退出 MC 会自动停止。")
+            return qsTr("Tracy 与 AirPerf 系统/GPU/进程指标持续监测中，已完成 %1 个窗口；退出 MC 会自动停止。")
                 .arg(windowsCompleted)
         }
         if (state.statusChecked !== true) return qsTr("正在检查检测环境…")

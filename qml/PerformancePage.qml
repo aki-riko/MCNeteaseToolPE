@@ -186,8 +186,10 @@ Item {
                         }
                     }
 
-                    RowLayout {
+                    GridLayout {
+                        objectName: "performanceChartsLayout"
                         width: parent ? parent.width : 0
+                        columns: width >= 1280 ? 2 : 1
                         spacing: Enums.spacing.m
 
                         ChartView {

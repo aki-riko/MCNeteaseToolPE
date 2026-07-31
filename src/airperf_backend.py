@@ -419,7 +419,9 @@ class AirPerfMonitor:
         with self._lock:
             self._status = "monitoring"
             self._warnings = warnings
-            self._message = "AirPerf 系统、GPU、磁盘、进程与 DirectX 指标采集中"
+            self._message = "AirPerf 系统、GPU、磁盘与进程指标采集中"
+            if AIRPERF_GRAPHICS_ENABLED:
+                self._message = "AirPerf 系统、GPU、磁盘、进程与 DirectX 指标采集中"
             if warnings:
                 self._message = "AirPerf 其余指标采集中；" + "；".join(warnings)
         self._changed()

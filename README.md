@@ -39,7 +39,7 @@ MCNeteaseToolPE 面向网易 MC 中国版的地图与组件开发者,在提交�
   LevelDB sequence 与内容指纹，再追加 WAL 并重读验证，失败时自动回滚。
 - **📈 性能诊断**：自动识别 ModPC/Minecraft，进入游戏自动开始、退出自动停止；统一持续
   采集进程 CPU/内存、ModPC 内嵌 Tracy 热点，以及 AirPerf 本地协议提供的系统、GPU、磁盘、
-  进程 IO 和 DirectX 帧指标，手动停止或游戏退出后生成整段会话报告。
+  进程 IO 指标，手动停止或游戏退出后生成整段会话报告。DirectX 注入采集默认关闭。
 
 ## 🚀 基于 PrismQML 引擎
 
@@ -90,7 +90,7 @@ Minecraft 数据目录。
 “性能诊断”不启动 Tracy GUI 或 AirPerf GUI。程序直接连接 ModPC 内嵌 Tracy，并使用本项目
 还原的 AirPerf `Class___method` / `{isOk, return}` 本地 NetMQ RPC 客户端。运行时只从已安装的
 `airperf_service.exe` 按目标进程位数解出官方 `aphost` 采集组件，直接调用其 Processor、Memory、
-Process、GPU、PhysicalDisk 与 DirectX 接口；不启动 AirPerf GUI，不需要账号，也不加载 AirPerf
+Process、GPU 与 PhysicalDisk 接口；不启动 AirPerf GUI，不需要账号，也不加载 AirPerf
 自带 Python 运行时。
 程序按显式环境变量、`PATH`、Windows 程序目录的顺序查找 MCStudio；非标准安装位置可用
 `MCNETEASE_MCSTUDIO_ROOT` 指定，例如：
@@ -102,8 +102,9 @@ $env:MCNETEASE_MCSTUDIO_ROOT = "MCSTUDIO_ROOT"
 
 AirPerf RPC 通过客户端随附的 `libzmq` C ABI 通信，不需要安装 `pyzmq`。解包缓存目录可用
 `MCNETEASE_AIRPERF_RUNTIME_DIR` 覆盖，采样间隔可用 `MCNETEASE_AIRPERF_SAMPLE_INTERVAL_MS`
-覆盖；`MCNETEASE_AIRPERF_GRAPHICS_ENABLED=0` 可仅在诊断时关闭 DirectX 挂接。DirectX 挂接
-不可用时，其余 AirPerf 指标与 Tracy 报告仍会继续生成，并在状态中明确显示降级原因。CPU/内存
+覆盖。DirectX 挂接会向游戏进程注入官方 `apdx.dll`，因此默认关闭；只有显式设置
+`MCNETEASE_AIRPERF_GRAPHICS_ENABLED=1` 才会启用。挂接不可用时，其余 AirPerf 指标与 Tracy
+报告仍会继续生成，并在状态中明确显示降级原因。CPU/内存
 火焰图按钮复制网易公开的 `StartProfile`/`StopProfile` 与
 `StartMemProfile`/`StopMemProfile` 调试脚本，生成的 SVG 位于 ModPC 目录；提审前必须
 移除项目中的诊断调用。

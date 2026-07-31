@@ -22,6 +22,7 @@ sys.path.insert(0, r'{REPO_ROOT}')
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtCore import QObject, QUrl
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+from PySide6.QtQuick import QQuickWindow
 from PySide6.QtWidgets import QApplication
 from prismqml import register_types
 from prismqml.python.core.engine import EngineManager
@@ -66,9 +67,14 @@ component = QQmlComponent(engine, QUrl.fromLocalFile(r'{PAGE}'))
 assert not component.isError(), [error.toString() for error in component.errors()]
 page = component.create()
 assert page is not None, [error.toString() for error in component.errors()]
+window = QQuickWindow()
+page.setParentItem(window.contentItem())
 page.setProperty('backend', backend)
+window.setWidth(1100)
+window.setHeight(800)
 page.setWidth(1100)
 page.setHeight(800)
+window.show()
 app.processEvents()
 for name in (
     'performanceProcessCard', 'performanceThresholdCard',
@@ -82,6 +88,18 @@ assert page.findChild(QObject, 'tracyDurationSpinBox') is None
 assert page.findChild(QObject, 'tracyFilterInput') is None
 assert page.findChild(QObject, 'performanceOfficialToolsCard') is None
 assert page.findChild(QObject, 'performanceMonitorButton') is None
+
+cpu_chart = page.findChild(QObject, 'performanceCpuChart')
+memory_chart = page.findChild(QObject, 'performanceMemoryChart')
+assert memory_chart.property('y') > cpu_chart.property('y'), (
+    cpu_chart.property('y'), memory_chart.property('y'), page.property('width')
+)
+page.setWidth(1600)
+window.setWidth(1600)
+app.processEvents()
+assert memory_chart.property('y') == cpu_chart.property('y'), (
+    cpu_chart.property('y'), memory_chart.property('y'), page.property('width')
+)
 
 tracy_card = page.findChild(QObject, 'tracyAnalysisCard')
 capture_button = page.findChild(QObject, 'performanceUnifiedMonitorButton')
