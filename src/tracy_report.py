@@ -7,6 +7,19 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 
+def new_session_summary() -> dict[str, object]:
+    """创建常量内存增长的持续监测归约状态。"""
+    return {
+        "windows": 0,
+        "seconds": 0,
+        "frames": 0,
+        "framesKnown": True,
+        "zones": 0,
+        "capturedAt": "",
+        "functions": {},
+    }
+
+
 def _number(value: object) -> float:
     try:
         return float(value)
@@ -108,6 +121,90 @@ def build_capture_report(capture: Mapping[str, object]) -> dict[str, object]:
     }
 
 
+def add_capture_to_session(
+    session: dict[str, object], capture: Mapping[str, object]
+) -> None:
+    """把一个窗口累加到持续会话，不保留每个窗口的完整明细。"""
+    session["windows"] = _integer(session.get("windows")) + 1
+    session["seconds"] = _integer(session.get("seconds")) + _integer(
+        capture.get("seconds")
+    )
+    frames = capture.get("frames")
+    if frames is None:
+        session["framesKnown"] = False
+    else:
+        session["frames"] = _integer(session.get("frames")) + _integer(frames)
+    session["zones"] = _integer(session.get("zones")) + _integer(capture.get("zones"))
+    session["capturedAt"] = str(capture.get("capturedAt", ""))
+    functions = session.setdefault("functions", {})
+    if isinstance(functions, dict):
+        _merge_session_rows(functions, _rows(capture, "rows"))
+
+
+def _merge_session_rows(
+    functions: dict[str, object], rows: list[Mapping[str, object]]
+) -> None:
+    for row in rows:
+        name = str(row.get("name", "")).strip()
+        if not name:
+            continue
+        current = functions.setdefault(
+            name, {"name": name, "selfMs": 0.0, "totalMs": 0.0, "calls": 0}
+        )
+        if not isinstance(current, dict):
+            continue
+        current["selfMs"] = _number(current.get("selfMs")) + _number(row.get("selfMs"))
+        current["totalMs"] = _number(current.get("totalMs")) + _number(row.get("totalMs"))
+        current["calls"] = _integer(current.get("calls")) + _integer(row.get("calls"))
+
+
+def _session_capture(session: Mapping[str, object]) -> dict[str, object]:
+    functions = session.get("functions")
+    values = list(functions.values()) if isinstance(functions, Mapping) else []
+    rows = [dict(row) for row in values if isinstance(row, Mapping)]
+    rows.sort(key=lambda row: (-_number(row.get("selfMs")), str(row.get("name", ""))))
+    seconds = _integer(session.get("seconds"))
+    frames = _integer(session.get("frames"))
+    frames_known = session.get("framesKnown") is True
+    return {
+        "seconds": seconds,
+        "frames": frames if frames_known else None,
+        "zones": _integer(session.get("zones")),
+        "averageFps": frames / seconds if frames_known and seconds else None,
+        "matchedFunctions": len(rows),
+        "totalSelfMs": sum(_number(row.get("selfMs")) for row in rows),
+        "capturedAt": session.get("capturedAt", ""),
+        "top": rows[:3],
+    }
+
+
+def build_session_report(
+    session: Mapping[str, object], *, active: bool
+) -> dict[str, object]:
+    """生成持续会话当前累计或停止后的总结。"""
+    windows = _integer(session.get("windows"))
+    report = build_capture_report(_session_capture(session))
+    if not windows:
+        conclusion = (
+            "正在采集第一个监测窗口，请继续操作需要分析的玩法。"
+            if active
+            else "监测在首个完整窗口结束前停止，没有可汇总的函数热点。"
+        )
+    else:
+        conclusion = f"已完成 {windows} 个连续窗口；{report['conclusion']}"
+    report.update(
+        {
+            "kind": "session",
+            "title": "持续性能监测报告",
+            "verdict": "持续监测中" if active else "监测完成",
+            "tone": "processing" if active else "info",
+            "conclusion": conclusion,
+            "metrics": [_metric("监测窗口", str(windows))] + report["metrics"],
+        }
+    )
+    return report
+
+
 def _comparison_conclusion(summary: Mapping[str, object]) -> tuple[str, str, str]:
     delta = _number(summary.get("deltaMs"))
     percent = summary.get("percent")
@@ -186,4 +283,10 @@ def build_comparison_report(
     }
 
 
-__all__ = ["build_capture_report", "build_comparison_report"]
+__all__ = [
+    "add_capture_to_session",
+    "build_capture_report",
+    "build_comparison_report",
+    "build_session_report",
+    "new_session_summary",
+]

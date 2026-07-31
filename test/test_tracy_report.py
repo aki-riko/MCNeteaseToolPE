@@ -4,7 +4,13 @@
 
 from __future__ import annotations
 
-from src.tracy_report import build_capture_report, build_comparison_report
+from src.tracy_report import (
+    add_capture_to_session,
+    build_capture_report,
+    build_comparison_report,
+    build_session_report,
+    new_session_summary,
+)
 
 
 def _capture() -> dict[str, object]:
@@ -107,3 +113,33 @@ def test_comparison_report_marks_total_regression() -> None:
     assert report["verdict"] == "需要关注"
     assert report["tone"] == "warning"
     assert "上升 5.000 ms（25.00%）" in str(report["conclusion"])
+
+
+def test_continuous_session_aggregates_windows_without_retaining_window_list() -> None:
+    session = new_session_summary()
+    first = _capture()
+    first["rows"] = list(first["top"])
+    second = _capture()
+    second["rows"] = [
+        {"name": "hot @ Demo.Server.Main", "selfMs": 5.0, "totalMs": 8.0, "calls": 4}
+    ]
+
+    add_capture_to_session(session, first)
+    add_capture_to_session(session, second)
+    report = build_session_report(session, active=False)
+
+    assert session["windows"] == 2
+    assert session["seconds"] == 20
+    assert "captures" not in session
+    assert len(session["functions"]) == 2
+    assert report["kind"] == "session"
+    assert report["verdict"] == "监测完成"
+    assert "已完成 2 个连续窗口" in str(report["conclusion"])
+    assert "自身 25.000 ms" in str(report["highlights"][0]["detail"])
+
+
+def test_stopped_session_without_complete_window_explains_missing_hotspots() -> None:
+    report = build_session_report(new_session_summary(), active=False)
+
+    assert report["verdict"] == "监测完成"
+    assert "首个完整窗口结束前停止" in str(report["conclusion"])

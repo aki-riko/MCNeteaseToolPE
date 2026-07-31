@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// 官方性能工具桥接与 ModPC 本地进程监测页面。
+// 一键持续 Tracy、CPU 与内存监测页面。
 import QtQuick
 import QtQuick.Layouts
 import PrismQML
@@ -10,13 +10,8 @@ Item {
 
     property var backend: null
     property var _state: backend ? (backend.state || {}) : ({})
-    readonly property var _tools: _state.tools || ({})
     readonly property var _processes: _state.processes || []
     readonly property var _tracy: _state.tracy || ({})
-
-    function _tool(key) {
-        return root._tools[key] || ({ "available": false, "path": "" })
-    }
 
     function _selectedProcessIndex() {
         var selectedPid = Number(root._state.selectedPid || 0)
@@ -77,7 +72,7 @@ Item {
                 }
                 Label {
                     width: parent ? parent.width : 0
-                    text: qsTr("一键找出 ModPC 中最耗时的函数，并自动对比优化前后的变化。")
+                    text: qsTr("进入 MC 自动开始，退出 MC 自动停止；也可手动控制并生成整段会话报告。")
                     color: Enums.textColor.secondary
                     font.family: Enums.fontFamily
                     font.pixelSize: Enums.typography.caption
@@ -89,120 +84,9 @@ Item {
                 width: parent ? parent.width : 0
                 backend: root.backend
                 state: root._tracy
+                performanceState: root._state
                 processes: root._processes
                 selectedPid: Number(root._state.selectedPid || 0)
-            }
-
-            Card {
-                objectName: "performanceOfficialToolsCard"
-                width: parent ? parent.width : 0
-                autoHeight: true
-
-                Column {
-                    width: parent ? parent.width : 0
-                    spacing: Enums.spacing.m
-
-                    RowLayout {
-                        width: parent ? parent.width : 0
-                        spacing: Enums.spacing.m
-
-                        Icon { icon: "Toolbox"; iconSize: Enums.iconSize.xl }
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: Enums.spacing.xxs
-                            Label {
-                                text: qsTr("专业工具（可选）")
-                                color: Enums.textColor.primary
-                                font.family: Enums.fontFamily
-                                font.pixelSize: Enums.typography.subtitle
-                                font.bold: true
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                text: root._state.mcStudioRoot
-                                      ? root._state.mcStudioRoot
-                                      : qsTr("未找到 MCStudio；可用 MCNETEASE_MCSTUDIO_ROOT 指定安装目录")
-                                color: Enums.textColor.secondary
-                                font.family: Enums.fontFamily
-                                font.pixelSize: Enums.typography.caption
-                                wrapMode: Text.NoWrap
-                                elide: Text.ElideMiddle
-                            }
-                        }
-                        Button {
-                            objectName: "performanceRefreshButton"
-                            text: qsTr("重新检测")
-                            style: Enums.button.style_default
-                            onClicked: root._refresh()
-                        }
-                    }
-
-                    Separator { width: parent ? parent.width : 0 }
-
-                    RowLayout {
-                        width: parent ? parent.width : 0
-                        spacing: Enums.spacing.m
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: Enums.spacing.xxs
-                            RowLayout {
-                                spacing: Enums.spacing.s
-                                Label { text: qsTr("方块探针"); font.bold: true }
-                                Badge {
-                                    text: root._tool("tracy").available ? qsTr("已安装") : qsTr("未找到")
-                                    level: root._tool("tracy").available
-                                           ? Enums.statusLevel.success : Enums.statusLevel.warning
-                                }
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                text: qsTr("启动 Tracy Profiler，连接 ModPC 后逐帧查看主线程与 MC_SERVER 调用区间。")
-                                color: Enums.textColor.secondary
-                                wrapMode: Text.WordWrap
-                            }
-                        }
-                        Button {
-                            objectName: "launchTracyButton"
-                            text: qsTr("启动 Tracy")
-                            style: Enums.button.style_primary
-                            enabled: root._tool("tracy").available === true
-                            onClicked: backend.launchTracy()
-                        }
-                    }
-
-                    Separator { width: parent ? parent.width : 0 }
-
-                    RowLayout {
-                        width: parent ? parent.width : 0
-                        spacing: Enums.spacing.m
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: Enums.spacing.xxs
-                            RowLayout {
-                                spacing: Enums.spacing.s
-                                Label { text: qsTr("方块易测"); font.bold: true }
-                                Badge {
-                                    text: root._tool("airperf").available ? qsTr("已安装") : qsTr("未找到")
-                                    level: root._tool("airperf").available
-                                           ? Enums.statusLevel.success : Enums.statusLevel.warning
-                                }
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                text: qsTr("启动 AirPerf，对 Android、iOS 或 Win PC 设备执行场景化性能采集。")
-                                color: Enums.textColor.secondary
-                                wrapMode: Text.WordWrap
-                            }
-                        }
-                        Button {
-                            objectName: "launchAirPerfButton"
-                            text: qsTr("启动 AirPerf")
-                            style: Enums.button.style_primary
-                            enabled: root._tool("airperf").available === true
-                            onClicked: backend.launchAirPerf()
-                        }
-                    }
-                }
             }
 
             Card {
@@ -215,7 +99,7 @@ Item {
                     spacing: Enums.spacing.l
 
                     Label {
-                        text: qsTr("ModPC 进程监测")
+                        text: qsTr("实时 CPU 与内存")
                         color: Enums.textColor.primary
                         font.family: Enums.fontFamily
                         font.pixelSize: Enums.typography.subtitle
@@ -233,7 +117,8 @@ Item {
                             model: root._processes
                             currentIndex: root._selectedProcessIndex()
                             placeholderText: qsTr("未发现 ModPC/Minecraft 进程")
-                            enabled: root._processes.length > 0 && root._state.monitoring !== true
+                            enabled: root._processes.length > 0
+                                     && root._state.unifiedMonitoring !== true
                             onActivated: function(index) {
                                 if (backend && index >= 0 && index < root._processes.length) {
                                     backend.selectProcess(Number(root._processes[index].pid))
@@ -242,22 +127,10 @@ Item {
                         }
 
                         Button {
-                            objectName: "performanceMonitorButton"
-                            text: root._state.monitoring ? qsTr("停止监测") : qsTr("开始监测")
-                            style: root._state.monitoring
-                                   ? Enums.button.style_default : Enums.button.style_primary
-                            enabled: root._state.samplerAvailable === true
-                                     && (root._state.monitoring === true || root._state.selectedPid > 0)
-                            onClicked: {
-                                if (root._state.monitoring) backend.stopMonitoring()
-                                else backend.startMonitoring()
-                            }
-                        }
-                        Button {
                             objectName: "performanceClearButton"
                             text: qsTr("清空曲线")
                             style: Enums.button.style_default
-                            enabled: root._state.monitoring !== true
+                            enabled: root._state.unifiedMonitoring !== true
                             onClicked: backend.clearHistory()
                         }
                     }
@@ -351,53 +224,11 @@ Item {
 
                     Label {
                         width: parent ? parent.width : 0
-                        text: qsTr("这里显示 Win PC 进程 CPU 与工作集，不能直接替代网易手机集群的组件内存、平均帧率或机审结论。")
+                        text: qsTr("由上方持续监测统一控制；这里显示 Win PC 进程 CPU 与工作集，不能直接替代网易手机集群机审结论。")
                         color: Enums.statusLevel.warningColor
                         font.family: Enums.fontFamily
                         font.pixelSize: Enums.typography.caption
                         wrapMode: Text.WordWrap
-                    }
-                }
-            }
-
-            Card {
-                objectName: "performanceProfileCard"
-                width: parent ? parent.width : 0
-                autoHeight: true
-
-                Column {
-                    width: parent ? parent.width : 0
-                    spacing: Enums.spacing.m
-
-                    Label {
-                        text: qsTr("脚本火焰图")
-                        color: Enums.textColor.primary
-                        font.family: Enums.fontFamily
-                        font.pixelSize: Enums.typography.subtitle
-                        font.bold: true
-                    }
-                    Label {
-                        width: parent ? parent.width : 0
-                        text: qsTr("复制网易公开的服务端 ModAPI 示例到调试脚本中，调用 StartCpuProfile(秒数) 或 StartMemoryProfile(秒数)，结束后会在 ModPC 目录生成 SVG。提审前必须移除诊断调用。")
-                        color: Enums.textColor.secondary
-                        wrapMode: Text.WordWrap
-                    }
-                    RowLayout {
-                        width: parent ? parent.width : 0
-                        spacing: Enums.spacing.m
-                        Button {
-                            objectName: "copyCpuProfileButton"
-                            text: qsTr("复制 CPU 分析脚本")
-                            style: Enums.button.style_filled
-                            onClicked: backend.copyProfileSnippet("cpu")
-                        }
-                        Button {
-                            objectName: "copyMemoryProfileButton"
-                            text: qsTr("复制内存分析脚本")
-                            style: Enums.button.style_filled
-                            onClicked: backend.copyProfileSnippet("memory")
-                        }
-                        Item { Layout.fillWidth: true }
                     }
                 }
             }

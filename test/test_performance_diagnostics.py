@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication
+from PySide6.QtCore import QCoreApplication, QObject, Signal
 
 from src.performance_backend import (
     CPU_PROFILE_SNIPPET,
@@ -71,6 +71,44 @@ class _FakeSampler:
         if self.samples:
             return self.samples.pop(0)
         return ProcessSample(42, 25.0, 650.0, 710.0)
+
+
+class _FakeTaskHandle(QObject):
+    succeeded = Signal(object)
+    failed = Signal(object)
+
+
+def _reachable_tracy_probe() -> dict[str, object]:
+    return {
+        "address": "127.0.0.1",
+        "port": 8086,
+        "reachable": True,
+        "binAvailable": True,
+        "binDir": "tracy_bin",
+        "tools": {},
+    }
+
+
+def _tracy_capture_payload(*, seconds: int = 10) -> dict[str, object]:
+    row = {
+        "name": "tick @ Demo.Server.Main",
+        "selfMs": 12.0,
+        "totalMs": 18.0,
+        "calls": 60,
+    }
+    return {
+        "seconds": seconds,
+        "frames": 600,
+        "zones": 900,
+        "averageFps": 60.0,
+        "filter": "",
+        "uniqueFunctions": 1,
+        "matchedFunctions": 1,
+        "totalSelfMs": 12.0,
+        "totalTotalMs": 18.0,
+        "rows": [row],
+        "top": [row],
+    }
 
 
 def _application() -> QCoreApplication:
@@ -217,6 +255,97 @@ def test_backend_refresh_target_auto_selects_late_modpc_process(tmp_path: Path) 
     assert backend.state["selectedPid"] == 84
     assert backend.state["processes"][0]["name"] == "ModPC.exe"
     assert len(probe_calls) == 2
+
+
+def test_unified_monitoring_stops_after_current_window_and_combines_system_metrics(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _application()
+    handle = _FakeTaskHandle()
+    monkeypatch.setattr("prismqml.run_in_pool", lambda _operation, *_args: handle)
+    backend = PerformanceBackend(
+        locator=_FakeLocator(tmp_path),
+        sampler=_FakeSampler(),
+        tracy_probe=_reachable_tracy_probe,
+        tracy_capture_runner=lambda _seconds, _filter, _top: {},
+    )
+    backend.refresh()
+
+    backend.startUnifiedMonitoring()
+    active = backend.state
+    assert active["unifiedMonitoring"] is True
+    assert active["monitoring"] is True
+    assert active["tracy"]["continuousActive"] is True
+    assert active["tracy"]["report"]["kind"] == "session"
+
+    backend.stopUnifiedMonitoring()
+    stopping = backend.state
+    assert stopping["monitoring"] is False
+    assert stopping["unifiedMonitoring"] is True
+    assert stopping["tracy"]["stopRequested"] is True
+    handle.succeeded.emit(_tracy_capture_payload())
+
+    state = backend.state
+    metrics = {
+        item["label"]: item["value"] for item in state["tracy"]["report"]["metrics"]
+    }
+    assert state["unifiedMonitoring"] is False
+    assert state["tracy"]["report"]["verdict"] == "监测完成"
+    assert metrics["CPU 平均"] == "12.5%"
+    assert metrics["CPU 峰值"] == "12.5%"
+    assert metrics["内存峰值"] == "640.0 MB"
+    assert metrics["系统采样"] == "1"
+
+
+def test_default_auto_monitoring_waits_for_new_process_after_manual_stop(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _application()
+    handles = [_FakeTaskHandle(), _FakeTaskHandle()]
+    scheduled: list[tuple[object, ...]] = []
+
+    def fake_run_in_pool(_operation, *arguments):
+        scheduled.append(arguments)
+        return handles[len(scheduled) - 1]
+
+    monkeypatch.setattr("prismqml.run_in_pool", fake_run_in_pool)
+    sampler = _FakeSampler()
+    sampler.processes = []
+    backend = PerformanceBackend(
+        locator=_FakeLocator(tmp_path),
+        sampler=sampler,
+        tracy_probe=_reachable_tracy_probe,
+        tracy_capture_runner=lambda _seconds, _filter, _top: {},
+    )
+    backend.refresh()
+    assert backend.state["autoMonitoring"] is True
+
+    sampler.processes = [ProcessDescriptor(84, "ModPC.exe")]
+    backend.refreshPerformanceTarget()
+    assert backend.state["unifiedMonitoring"] is True
+    assert scheduled == [(10, "", 25)]
+
+    backend.stopUnifiedMonitoring()
+    handles[0].succeeded.emit(_tracy_capture_payload())
+    backend.refreshPerformanceTarget()
+    assert backend.state["unifiedMonitoring"] is False
+    assert len(scheduled) == 1
+
+    sampler.processes = []
+    backend.refreshPerformanceTarget()
+    sampler.processes = [ProcessDescriptor(85, "Minecraft.Windows.exe")]
+    backend.refreshPerformanceTarget()
+    assert backend.state["selectedPid"] == 85
+    assert backend.state["unifiedMonitoring"] is True
+    assert len(scheduled) == 2
+
+    sampler.processes = []
+    sampler.sample_error = ProcessLookupError("进程已退出")
+    backend._sample_selected_process()
+    assert backend.state["monitoring"] is False
+    assert backend.state["tracy"]["stopRequested"] is True
+    handles[1].succeeded.emit(_tracy_capture_payload())
+    assert backend.state["unifiedMonitoring"] is False
 
 
 def test_backend_launches_only_discovered_official_tools(tmp_path: Path) -> None:
@@ -395,34 +524,32 @@ def test_performance_page_is_registered_and_declares_fidelity_boundary() -> None
     assert '"性能诊断"' in main_source
     for contract in (
         'objectName: "performancePage"',
-        'objectName: "performanceOfficialToolsCard"',
         'objectName: "performanceProcessCard"',
-        'objectName: "performanceProfileCard"',
         'objectName: "performanceThresholdCard"',
         'objectName: "performanceCpuChart"',
         'objectName: "performanceMemoryChart"',
         "TracyAnalysisCard",
-        "专业工具（可选）",
-        'backend.copyProfileSnippet("cpu")',
-        'backend.copyProfileSnippet("memory")',
+        "进入 MC 自动开始",
+        "由上方持续监测统一控制",
         "不能直接替代网易手机集群",
         "官方未公开采样窗口",
     ):
         assert contract in page_source
-    assert page_source.index("TracyAnalysisCard {") < page_source.index(
-        'objectName: "performanceOfficialToolsCard"'
-    )
     for contract in (
         'objectName: "tracyAnalysisCard"',
-        'objectName: "tracyQuickCaptureButton"',
-        'qsTr("开始检测")',
-        'qsTr("再次检测并对比")',
+        'objectName: "performanceUnifiedMonitorButton"',
+        'objectName: "performanceAutoMonitoringButton"',
+        'qsTr("开始持续监测")',
+        'qsTr("停止并生成报告")',
+        'qsTr("正在停止并生成报告…")',
         'qsTr("等待 ModPC 启动…")',
         'qsTr("新增")',
         'qsTr("消失")',
         "结果用于本机优化，不等于网易机审成绩",
-        "backend.captureTracyQuick()",
-        "backend.refreshPerformanceTarget()",
+        "backend.startUnifiedMonitoring()",
+        "backend.stopUnifiedMonitoring()",
+        "backend.setAutoMonitoring(!root.autoMonitoring)",
+        "Enums.statusLevel.success",
         'objectName: "tracyReportSection"',
         'objectName: "tracyReportTitle"',
         'objectName: "tracyReportConclusion"',
@@ -431,9 +558,13 @@ def test_performance_page_is_registered_and_declares_fidelity_boundary() -> None
     ):
         assert contract in tracy_source
     for removed_control in (
+        'objectName: "performanceOfficialToolsCard"',
+        'objectName: "performanceProfileCard"',
+        'objectName: "performanceMonitorButton"',
+        'objectName: "tracyQuickCaptureButton"',
         'objectName: "tracyDurationSpinBox"',
         'objectName: "tracyFilterInput"',
         'objectName: "tracyRefreshButton"',
         'objectName: "tracyResetButton"',
     ):
-        assert removed_control not in tracy_source
+        assert removed_control not in page_source + tracy_source

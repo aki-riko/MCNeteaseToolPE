@@ -236,3 +236,62 @@ def test_controller_requires_baseline_and_same_duration_for_comparison(monkeypat
     assert len(scheduled) == 1
     assert controller.state["busy"] is False
     assert "基线相同" in results[-1][1]
+
+
+def test_continuous_controller_repeats_until_current_window_finishes_after_stop(
+    monkeypatch,
+) -> None:
+    handles = [_FakeTaskHandle(), _FakeTaskHandle(), _FakeTaskHandle()]
+    scheduled: list[tuple[object, ...]] = []
+    results: list[tuple[bool, str]] = []
+
+    def fake_run_in_pool(_operation, *arguments):
+        scheduled.append(arguments)
+        return handles[len(scheduled) - 1]
+
+    monkeypatch.setattr("prismqml.run_in_pool", fake_run_in_pool)
+    controller = _controller(results, capture_seconds=6)
+
+    assert controller.start_continuous() is True
+    assert scheduled == [(6, "", 25)]
+    assert controller.state["continuousActive"] is True
+    assert controller.state["busy"] is True
+
+    handles[0].succeeded.emit(_capture_payload(20.0, seconds=6))
+    assert scheduled == [(6, "", 25), (6, "", 25)]
+    assert controller.state["windowsCompleted"] == 1
+    assert controller.state["report"]["verdict"] == "持续监测中"
+
+    assert controller.stop_continuous() is True
+    assert controller.state["stopRequested"] is True
+    handles[1].succeeded.emit(_capture_payload(8.0, seconds=6))
+
+    state = controller.state
+    assert len(scheduled) == 2
+    assert state["continuousActive"] is False
+    assert state["stopRequested"] is False
+    assert state["busy"] is False
+    assert state["windowsCompleted"] == 2
+    assert state["report"]["kind"] == "session"
+    assert state["report"]["verdict"] == "监测完成"
+    assert results[-1] == (True, "持续监测完成：共 2 个窗口")
+
+
+def test_continuous_controller_finishes_partial_report_on_worker_failure(
+    monkeypatch,
+) -> None:
+    handle = _FakeTaskHandle()
+    results: list[tuple[bool, str]] = []
+    monkeypatch.setattr("prismqml.run_in_pool", lambda _operation, *_args: handle)
+    controller = _controller(results)
+
+    controller.start_continuous()
+    handle.failed.emit(RuntimeError("连接断开"))
+
+    state = controller.state
+    assert state["continuousActive"] is False
+    assert state["busy"] is False
+    assert state["report"]["kind"] == "session"
+    assert state["report"]["verdict"] == "监测完成"
+    assert results[-1][0] is False
+    assert "连接断开" in results[-1][1]

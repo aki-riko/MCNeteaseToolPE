@@ -10,6 +10,7 @@ Card {
 
     property var backend: null
     property var state: ({})
+    property var performanceState: ({})
     property var processes: []
     property int selectedPid: 0
     readonly property var captures: state.captures || []
@@ -21,8 +22,10 @@ Card {
     readonly property var reportRecommendations: report.recommendations || []
     readonly property bool ready: state.binAvailable === true && state.reachable === true
     readonly property bool busy: state.busy === true
-    readonly property bool hasBaseline: String(state.baselineCaptureId || "") !== ""
-    readonly property int captureSeconds: Number(state.captureSeconds || 10)
+    readonly property bool continuousActive: state.continuousActive === true
+    readonly property bool stopRequested: state.stopRequested === true
+    readonly property bool autoMonitoring: performanceState.autoMonitoring !== false
+    readonly property int windowsCompleted: Number(state.windowsCompleted || 0)
     readonly property var detectedProcess: _processByPid(selectedPid)
     readonly property var selectedSummary: _captureById(state.selectedCaptureId || "")
     readonly property var diffRows: {
@@ -65,16 +68,20 @@ Card {
     }
 
     function _buttonText() {
-        if (busy) return qsTr("正在检测…")
+        if (stopRequested) return qsTr("正在停止并生成报告…")
+        if (continuousActive) return qsTr("停止并生成报告")
         if (state.statusChecked !== true) return qsTr("正在准备…")
         if (state.binAvailable !== true) return qsTr("检测组件不可用")
         if (state.reachable !== true) return qsTr("等待 ModPC 启动…")
-        return hasBaseline ? qsTr("再次检测并对比") : qsTr("开始检测")
+        return qsTr("开始持续监测")
     }
 
     function _guideText() {
-        if (busy) return qsTr("正在检测 %1 秒，请在游戏里正常操作要测的玩法。")
-                         .arg(captureSeconds)
+        if (stopRequested) return qsTr("CPU/内存已停止，正在完成当前 Tracy 窗口并汇总报告。")
+        if (continuousActive) {
+            return qsTr("持续监测中，已完成 %1 个窗口；请正常操作，退出 MC 会自动停止。")
+                .arg(windowsCompleted)
+        }
         if (state.statusChecked !== true) return qsTr("正在检查检测环境…")
         if (state.binAvailable !== true) return qsTr("检测组件缺失，请重新安装当前版本。")
         if (state.reachable !== true) {
@@ -84,13 +91,16 @@ Card {
             }
             return qsTr("正在自动查找 ModPC；启动后会自动识别。")
         }
-        if (diff.summary !== undefined) return qsTr("对比完成：绿色表示变快，橙色表示变慢。")
-        if (hasBaseline) return qsTr("已找到本次热点；修改后再点一次，会自动对比变化。")
         if (detectedProcess.text) {
-            return qsTr("已自动识别 %1；进入要测的场景后点一下即可。")
+            return autoMonitoring
+                ? qsTr("已自动识别 %1；默认进入 MC 自动开始，退出 MC 自动出报告。")
+                    .arg(detectedProcess.text)
+                : qsTr("已自动识别 %1；点击开始后会持续监测到手动停止。")
                 .arg(detectedProcess.text)
         }
-        return qsTr("已连接 ModPC；进入要测的场景后点一下即可。")
+        return autoMonitoring
+            ? qsTr("自动监测已开启；进入 MC 后会自动开始。")
+            : qsTr("已连接 ModPC；点击开始后持续监测到手动停止。")
     }
 
     function _diffKindText(kind) {
@@ -120,13 +130,6 @@ Card {
         return qsTr("热点")
     }
 
-    Timer {
-        interval: Math.max(250, Number(root.state.probeIntervalMs || 1500))
-        repeat: true
-        running: root.visible && root.backend !== null && !root.busy
-        onTriggered: root.backend.refreshPerformanceTarget()
-    }
-
     Column {
         width: parent ? parent.width : 0
         spacing: Enums.spacing.m
@@ -139,7 +142,7 @@ Card {
                 Layout.fillWidth: true
                 spacing: Enums.spacing.xxs
                 Label {
-                    text: qsTr("一键性能检测")
+                    text: qsTr("持续性能监测")
                     color: Enums.textColor.primary
                     font.family: Enums.fontFamily
                     font.pixelSize: Enums.typography.subtitle
@@ -155,12 +158,32 @@ Card {
                 }
             }
             Button {
-                objectName: "tracyQuickCaptureButton"
-                Layout.preferredWidth: 190
+                objectName: "performanceAutoMonitoringButton"
+                Layout.preferredWidth: 150
+                text: root.autoMonitoring ? qsTr("自动监测：开") : qsTr("自动监测：关")
+                style: Enums.button.style_filled
+                level: root.autoMonitoring
+                       ? Enums.statusLevel.success : Enums.statusLevel.info
+                enabled: root.backend !== null && !root.stopRequested
+                onClicked: root.backend.setAutoMonitoring(!root.autoMonitoring)
+            }
+            Button {
+                objectName: "performanceUnifiedMonitorButton"
+                Layout.preferredWidth: 220
                 text: root._buttonText()
                 style: Enums.button.style_filled
-                enabled: root.ready && !root.busy && root.backend !== null
-                onClicked: root.backend.captureTracyQuick()
+                level: root.continuousActive && !root.stopRequested
+                       ? Enums.statusLevel.warning
+                       : root.ready && !root.busy
+                         ? Enums.statusLevel.success : Enums.statusLevel.info
+                enabled: root.backend !== null
+                         && (root.continuousActive
+                             ? !root.stopRequested
+                             : root.ready && !root.busy && root.selectedPid > 0)
+                onClicked: {
+                    if (root.continuousActive) root.backend.stopUnifiedMonitoring()
+                    else root.backend.startUnifiedMonitoring()
+                }
             }
         }
 

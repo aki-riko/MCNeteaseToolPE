@@ -10,6 +10,7 @@ from typing import Callable
 
 from PySide6.QtCore import QObject, Property, QProcess, QTimer, Signal, Slot
 
+from .config import TRACY_PROBE_INTERVAL_MS
 from .performance_monitor import (
     MCSTUDIO_ROOT_ENV,
     PerformanceToolLocator,
@@ -111,6 +112,12 @@ class PerformanceBackend(QObject):
         self._cpu_history: list[dict[str, object]] = []
         self._memory_history: list[dict[str, object]] = []
         self._sample_number = 0
+        self._auto_monitoring = True
+        self._auto_blocked_pid = 0
+        self._session_sample_count = 0
+        self._session_cpu_total = 0.0
+        self._session_cpu_peak = 0.0
+        self._session_memory_peak = 0.0
         self._tracy = TracyPerformanceController(
             self.stateChanged.emit,
             self._emit_result,
@@ -120,6 +127,10 @@ class PerformanceBackend(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(SAMPLE_INTERVAL_MS)
         self._timer.timeout.connect(self._sample_selected_process)
+        self._discovery_timer = QTimer(self)
+        self._discovery_timer.setInterval(TRACY_PROBE_INTERVAL_MS)
+        self._discovery_timer.timeout.connect(self.refreshPerformanceTarget)
+        self._discovery_timer.start()
 
     @staticmethod
     def _empty_discovery() -> dict[str, object]:
@@ -135,6 +146,7 @@ class PerformanceBackend(QObject):
     @Property("QVariantMap", notify=stateChanged)
     def state(self) -> dict[str, object]:
         sample = self._last_sample
+        tracy_state = self._tracy_state_with_system_metrics()
         return {
             "mcStudioRoot": self._discovery.get("root", ""),
             "rootConfigured": bool(self._discovery.get("configured", False)),
@@ -144,13 +156,36 @@ class PerformanceBackend(QObject):
             "processes": [self._process_payload(item) for item in self._processes],
             "selectedPid": self._selected_pid,
             "monitoring": self._monitoring,
+            "unifiedMonitoring": self._monitoring or self._tracy.continuous_active,
+            "autoMonitoring": self._auto_monitoring,
             "cpuPercent": round(sample.cpu_percent, 1) if sample else 0.0,
             "workingSetMb": round(sample.working_set_mb, 1) if sample else 0.0,
             "peakWorkingSetMb": round(sample.peak_working_set_mb, 1) if sample else 0.0,
             "cpuHistory": list(self._cpu_history),
             "memoryHistory": list(self._memory_history),
-            "tracy": self._tracy.state,
+            "tracy": tracy_state,
         }
+
+    def _tracy_state_with_system_metrics(self) -> dict[str, object]:
+        tracy_state = dict(self._tracy.state)
+        report = tracy_state.get("report")
+        if not isinstance(report, dict) or report.get("kind") != "session":
+            return tracy_state
+        combined = dict(report)
+        metrics = list(combined.get("metrics", []))
+        if self._session_sample_count:
+            average = self._session_cpu_total / self._session_sample_count
+            metrics.extend(
+                [
+                    {"label": "CPU 平均", "value": f"{average:.1f}%"},
+                    {"label": "CPU 峰值", "value": f"{self._session_cpu_peak:.1f}%"},
+                    {"label": "内存峰值", "value": f"{self._session_memory_peak:.1f} MB"},
+                    {"label": "系统采样", "value": str(self._session_sample_count)},
+                ]
+            )
+        combined["metrics"] = metrics
+        tracy_state["report"] = combined
+        return tracy_state
 
     @staticmethod
     def _process_payload(process: ProcessDescriptor) -> dict[str, object]:
@@ -182,9 +217,19 @@ class PerformanceBackend(QObject):
     def _reconcile_selected_process(self, available_pids: set[int]) -> None:
         if self._selected_pid in available_pids:
             return
-        if self._monitoring:
-            self._stop_monitoring("目标进程已退出，监测已停止", success=False)
+        tracy_state = self._tracy.state
+        tracy_needs_stop = (
+            self._tracy.continuous_active and not tracy_state.get("stopRequested")
+        )
+        if self._monitoring or tracy_needs_stop:
+            self._stop_unified_monitoring(
+                "目标进程已退出，监测正在结束",
+                success=False,
+                manual=False,
+            )
         self._selected_pid = self._processes[0].pid if self._processes else 0
+        if self._auto_blocked_pid not in available_pids:
+            self._auto_blocked_pid = 0
         self._last_sample = None
 
     @Slot(int)
@@ -196,29 +241,100 @@ class PerformanceBackend(QObject):
         if target not in available_pids:
             self._emit_result(False, f"进程 PID {target} 已不存在")
             return
-        if self._monitoring:
-            self._stop_monitoring("")
+        if self._monitoring or self._tracy.continuous_active:
+            self._stop_unified_monitoring("", manual=True)
         self._selected_pid = target
         self._last_sample = None
         self.clearHistory()
 
     @Slot()
     def startMonitoring(self) -> None:
+        self._start_process_monitoring()
+
+    def _start_process_monitoring(self) -> bool:
         if self._sampler is None:
             self._emit_result(False, "当前系统不支持 Windows 进程性能采样")
-            return
+            return False
         if not self._selected_pid:
             self._emit_result(False, "请先启动并选择一个 ModPC/Minecraft 进程")
-            return
+            return False
         self._sampler.reset(self._selected_pid)
         self._monitoring = True
         self._timer.start()
         self.stateChanged.emit()
         self._sample_selected_process()
+        return self._monitoring
 
     @Slot()
     def stopMonitoring(self) -> None:
         self._stop_monitoring("监测已停止")
+
+    @Slot()
+    def startUnifiedMonitoring(self) -> None:
+        self._start_unified_monitoring(automatic=False)
+
+    def _start_unified_monitoring(self, *, automatic: bool) -> bool:
+        if self._monitoring or self._tracy.continuous_active:
+            if not automatic:
+                self._emit_result(False, "持续监测已经在运行")
+            return False
+        if self._sampler is None or not self._selected_pid:
+            if not automatic:
+                self._start_process_monitoring()
+            return False
+        self._reset_session_metrics()
+        if not self._tracy.start_continuous():
+            return False
+        if not self._start_process_monitoring():
+            self._tracy.stop_continuous()
+            return False
+        self._auto_blocked_pid = 0
+        mode = "自动" if automatic else "手动"
+        self._emit_result(True, f"{mode}持续监测已开始，退出游戏或点击停止后生成报告")
+        return True
+
+    @Slot()
+    def stopUnifiedMonitoring(self) -> None:
+        self._stop_unified_monitoring(
+            "正在停止并完成当前 Tracy 窗口",
+            manual=True,
+        )
+
+    def _stop_unified_monitoring(
+        self,
+        message: str,
+        *,
+        success: bool = True,
+        manual: bool,
+    ) -> None:
+        if manual and self._selected_pid:
+            self._auto_blocked_pid = self._selected_pid
+        self._stop_monitoring("")
+        tracy_stopping = self._tracy.stop_continuous()
+        if message:
+            suffix = "" if tracy_stopping else "，报告已收口"
+            self._emit_result(success, message + suffix)
+
+    @Slot(bool)
+    def setAutoMonitoring(self, enabled: bool) -> None:
+        value = bool(enabled)
+        if self._auto_monitoring == value:
+            return
+        self._auto_monitoring = value
+        if value:
+            self._auto_blocked_pid = 0
+            self.refreshPerformanceTarget()
+        else:
+            self.stateChanged.emit()
+
+    def _reset_session_metrics(self) -> None:
+        self._session_sample_count = 0
+        self._session_cpu_total = 0.0
+        self._session_cpu_peak = 0.0
+        self._session_memory_peak = 0.0
+        self._cpu_history = []
+        self._memory_history = []
+        self._sample_number = 0
 
     def _stop_monitoring(self, message: str, *, success: bool = True) -> None:
         self._timer.stop()
@@ -243,7 +359,14 @@ class PerformanceBackend(QObject):
             sample = self._sampler.sample(self._selected_pid)
         except (OSError, ProcessLookupError) as error:
             LOGGER.warning("采样进程 PID %s 失败：%s", self._selected_pid, error)
-            self._stop_monitoring(f"目标进程不可用：{error}", success=False)
+            if self._tracy.continuous_active:
+                self._stop_unified_monitoring(
+                    f"目标进程不可用：{error}，监测正在结束",
+                    success=False,
+                    manual=False,
+                )
+            else:
+                self._stop_monitoring(f"目标进程不可用：{error}", success=False)
             self._refresh_processes()
             self.stateChanged.emit()
             return
@@ -258,6 +381,14 @@ class PerformanceBackend(QObject):
         self._memory_history.append({"label": label, "value": round(sample.working_set_mb, 2)})
         self._cpu_history = self._cpu_history[-MAX_HISTORY_SAMPLES:]
         self._memory_history = self._memory_history[-MAX_HISTORY_SAMPLES:]
+        if self._tracy.continuous_active:
+            self._session_sample_count += 1
+            self._session_cpu_total += sample.cpu_percent
+            self._session_cpu_peak = max(self._session_cpu_peak, sample.cpu_percent)
+            self._session_memory_peak = max(
+                self._session_memory_peak,
+                sample.working_set_mb,
+            )
 
     @Slot()
     def refreshTracyStatus(self) -> None:
@@ -270,7 +401,22 @@ class PerformanceBackend(QObject):
         if not self._monitoring:
             self._refresh_processes(report_errors=False)
         self._tracy.refresh_status()
+        self._start_automatic_monitoring_if_ready()
         self.stateChanged.emit()
+
+    def _start_automatic_monitoring_if_ready(self) -> None:
+        if not self._auto_monitoring:
+            return
+        available_pids = {item.pid for item in self._processes}
+        if self._auto_blocked_pid:
+            if self._auto_blocked_pid in available_pids:
+                return
+            self._auto_blocked_pid = 0
+        if not self._selected_pid or self._monitoring or self._tracy.continuous_active:
+            return
+        tracy_state = self._tracy.state
+        if tracy_state.get("binAvailable") and tracy_state.get("reachable"):
+            self._start_unified_monitoring(automatic=True)
 
     @Slot(int, str, str)
     def captureTracy(self, seconds: int, name_contains: str, label: str) -> None:

@@ -17,11 +17,18 @@ from .tracy_analysis import (
     diff_tracy_captures,
     probe_tracy,
 )
-from .tracy_report import build_capture_report, build_comparison_report
+from .tracy_report import (
+    add_capture_to_session,
+    build_capture_report,
+    build_comparison_report,
+    build_session_report,
+    new_session_summary,
+)
 
 
 LOGGER = logging.getLogger(__name__)
 MAX_TRACY_CAPTURES = 20
+SESSION_CAPTURE_LABEL = "session"
 
 
 class TracyPerformanceController:
@@ -54,6 +61,9 @@ class TracyPerformanceController:
         self._comparison_capture_id = ""
         self._diff: dict[str, object] = {}
         self._report: dict[str, object] = {}
+        self._continuous_active = False
+        self._stop_requested = False
+        self._session_summary = new_session_summary()
 
     @staticmethod
     def _empty_status() -> dict[str, object]:
@@ -74,6 +84,9 @@ class TracyPerformanceController:
             "captureSeconds": self._capture_seconds,
             "probeIntervalMs": self._probe_interval_ms,
             "busy": self._busy,
+            "continuousActive": self._continuous_active,
+            "stopRequested": self._stop_requested,
+            "windowsCompleted": int(self._session_summary.get("windows", 0)),
             "captures": self._capture_summaries(),
             "selectedCaptureId": self._selected_capture_id,
             "baselineCaptureId": self._baseline_capture_id,
@@ -82,6 +95,10 @@ class TracyPerformanceController:
             "diff": dict(self._diff),
             "report": dict(self._report),
         }
+
+    @property
+    def continuous_active(self) -> bool:
+        return self._continuous_active
 
     def refresh_status(self) -> None:
         try:
@@ -96,6 +113,35 @@ class TracyPerformanceController:
         """使用默认参数采集热点；已有首次结果时自动生成前后对比。"""
         label = "after" if self._baseline_capture_id else "before"
         self.capture(self._capture_seconds, "", label)
+
+    def start_continuous(self) -> bool:
+        """启动连续 Tracy 窗口，直到显式请求停止。"""
+        if self._busy:
+            self._emit_result(False, "Tracy 正在采样，请先结束当前任务")
+            return False
+        self.refresh_status()
+        if not self._capture_is_ready():
+            return False
+        self._session_summary = new_session_summary()
+        self._continuous_active = True
+        self._stop_requested = False
+        self._diff = {}
+        self._report = build_session_report(self._session_summary, active=True)
+        self._state_changed()
+        return self._start_capture_task(
+            self._capture_seconds,
+            "",
+            SESSION_CAPTURE_LABEL,
+        )
+
+    def stop_continuous(self) -> bool:
+        """在当前窗口完成后停止，避免强杀 Tracy 导致损坏采样。"""
+        if not self._continuous_active:
+            return False
+        if not self._stop_requested:
+            self._stop_requested = True
+            self._state_changed()
+        return True
 
     def capture(self, seconds: int, name_contains: str, label: str) -> None:
         capture_label = self._validate_capture_request(label)
@@ -153,7 +199,9 @@ class TracyPerformanceController:
             return False
         return True
 
-    def _start_capture_task(self, duration: int, name_contains: str, label: str) -> None:
+    def _start_capture_task(
+        self, duration: int, name_contains: str, label: str
+    ) -> bool:
         from prismqml import run_in_pool
 
         self._set_busy(True)
@@ -166,16 +214,25 @@ class TracyPerformanceController:
             )
         except Exception as error:  # noqa: BLE001 - 调度失败必须恢复 UI 状态
             LOGGER.exception("启动 Tracy 后台采样失败")
-            self._set_busy(False)
-            self._emit_result(False, f"启动 Tracy 采样失败：{error}")
-            return
+            message = f"启动 Tracy 采样失败：{error}"
+            if label == SESSION_CAPTURE_LABEL:
+                self._finish_continuous(False, message)
+            else:
+                self._set_busy(False)
+                self._emit_result(False, message)
+            return False
         self._task_handle = handle
         handle.succeeded.connect(
             lambda payload, task=handle, capture_label=label: (
                 self._finish_capture(task, payload, capture_label)
             )
         )
-        handle.failed.connect(lambda failure, task=handle: self._fail_capture(task, failure))
+        handle.failed.connect(
+            lambda failure, task=handle, capture_label=label: self._fail_capture(
+                task, failure, capture_label
+            )
+        )
+        return True
 
     def _set_busy(self, value: bool) -> None:
         if self._busy == value:
@@ -189,13 +246,41 @@ class TracyPerformanceController:
         self._task_handle = None
         capture = self._validated_capture(payload)
         if capture is None:
-            self._set_busy(False)
             LOGGER.error("Tracy 后台采样返回了无效数据：%r", type(payload).__name__)
-            self._emit_result(False, "Tracy 采样失败：后台返回值不是有效采样数据")
+            message = "Tracy 采样失败：后台返回值不是有效采样数据"
+            if label == SESSION_CAPTURE_LABEL:
+                self._finish_continuous(False, message)
+            else:
+                self._set_busy(False)
+                self._emit_result(False, message)
             return
         capture = self._store_capture(capture, label)
+        if label == SESSION_CAPTURE_LABEL:
+            self._finish_continuous_window(capture)
+            return
         self._set_busy(False)
         self._emit_capture_result(capture, label)
+
+    def _finish_continuous_window(self, capture: dict[str, object]) -> None:
+        add_capture_to_session(self._session_summary, capture)
+        if self._stop_requested:
+            windows = int(self._session_summary.get("windows", 0))
+            self._finish_continuous(True, f"持续监测完成：共 {windows} 个窗口")
+            return
+        self._report = build_session_report(self._session_summary, active=True)
+        self._state_changed()
+        self._start_capture_task(
+            self._capture_seconds,
+            "",
+            SESSION_CAPTURE_LABEL,
+        )
+
+    def _finish_continuous(self, success: bool, message: str) -> None:
+        self._continuous_active = False
+        self._stop_requested = False
+        self._report = build_session_report(self._session_summary, active=False)
+        self._set_busy(False)
+        self._emit_result(success, message)
 
     @staticmethod
     def _validated_capture(payload: object) -> dict[str, object] | None:
@@ -236,7 +321,7 @@ class TracyPerformanceController:
             self._baseline_capture_id = capture_id
             self._diff = {}
             self._report = build_capture_report(capture)
-        else:
+        elif label == "after":
             self._comparison_capture_id = capture_id
             if not self._calculate_diff(
                 str(capture.get("filter", "")), emit_error=False
@@ -270,14 +355,18 @@ class TracyPerformanceController:
         if removed_reference:
             self._diff = {}
 
-    def _fail_capture(self, handle: object, failure: object) -> None:
+    def _fail_capture(self, handle: object, failure: object, label: str = "") -> None:
         if handle is not self._task_handle:
             return
         self._task_handle = None
-        self._set_busy(False)
         exception = getattr(failure, "exception", failure)
         LOGGER.error("Tracy 后台采样失败：%s", exception)
-        self._emit_result(False, f"Tracy 采样失败：{exception}")
+        message = f"Tracy 采样失败：{exception}"
+        if label == SESSION_CAPTURE_LABEL:
+            self._finish_continuous(False, message)
+        else:
+            self._set_busy(False)
+            self._emit_result(False, message)
 
     def select_capture(self, capture_id: str) -> None:
         if not self._capture_exists(capture_id, "Tracy 采样记录已不存在"):
@@ -345,6 +434,7 @@ class TracyPerformanceController:
         self._comparison_capture_id = ""
         self._diff = {}
         self._report = {}
+        self._session_summary = new_session_summary()
         self._state_changed()
 
     def _capture_summaries(self) -> list[dict[str, object]]:
@@ -357,7 +447,11 @@ class TracyPerformanceController:
     @staticmethod
     def _capture_summary(capture: dict[str, object]) -> dict[str, object]:
         capture_id = str(capture.get("captureId", ""))
-        label = "基线" if capture.get("label") == "before" else "复测"
+        label = {
+            "before": "基线",
+            "after": "复测",
+            SESSION_CAPTURE_LABEL: "持续",
+        }.get(str(capture.get("label", "")), "采样")
         fps = capture.get("averageFps")
         fps_text = f" · {float(fps):.1f} FPS" if isinstance(fps, (int, float)) else ""
         return {
