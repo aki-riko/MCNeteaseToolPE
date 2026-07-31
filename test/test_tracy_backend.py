@@ -153,6 +153,36 @@ def test_controller_capture_requires_reachable_native_server() -> None:
     assert "未连接到 ModPC 原生 Tracy" in results[-1][1]
 
 
+def test_controller_does_not_probe_tracy_while_capture_is_busy(monkeypatch) -> None:
+    """回归真实 33 窗口/42 秒：探测连接不得打断正在运行的抓取连接。"""
+    handle = _FakeTaskHandle()
+    probe_calls: list[bool] = []
+    results: list[tuple[bool, str]] = []
+
+    def probe() -> dict[str, object]:
+        probe_calls.append(True)
+        return _probe()
+
+    monkeypatch.setattr("prismqml.run_in_pool", lambda _operation, *_args: handle)
+    controller = TracyPerformanceController(
+        lambda: None,
+        lambda success, message: results.append((success, message)),
+        probe=probe,
+        capture_runner=lambda _seconds, _filter, _top: {},
+    )
+
+    assert controller.start_continuous() is True
+    assert probe_calls == [True]
+    controller.refresh_status()
+    controller.refresh_status()
+    assert probe_calls == [True]
+
+    assert controller.stop_continuous() is True
+    handle.succeeded.emit(_capture_payload(20.0))
+    controller.refresh_status()
+    assert probe_calls == [True, True]
+
+
 def test_controller_rejects_invalid_worker_payload(monkeypatch) -> None:
     handle = _FakeTaskHandle()
     results: list[tuple[bool, str]] = []

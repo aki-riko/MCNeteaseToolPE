@@ -102,6 +102,9 @@ class TracyPerformanceController:
         return self._continuous_active
 
     def refresh_status(self) -> None:
+        if self._busy:
+            LOGGER.debug("Tracy 抓取进行中，跳过会占用 8086 的状态探测")
+            return
         try:
             self._status = dict(self._probe())
         except (OSError, TracyAnalysisError, TypeError, ValueError) as error:
