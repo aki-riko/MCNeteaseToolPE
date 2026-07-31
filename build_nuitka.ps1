@@ -81,6 +81,8 @@ $moduleWhitelist = Resolve-RequiredPath -Path (Join-Path $projectRoot "src\netea
 $legacyWorker = Resolve-RequiredPath -Path (Join-Path $projectRoot "src\legacy_pylint_worker.py") -Label "Python 2.7 审核 worker"
 $thirdPartyNotices = Resolve-RequiredPath -Path (Join-Path $projectRoot "THIRD_PARTY_NOTICES.md") -Label "第三方组件声明"
 $tracyBin = Resolve-RequiredPath -Path (Join-Path $projectRoot "tracy_bin") -Label "Tracy CLI 目录"
+$nativeBin = Resolve-RequiredPath -Path (Join-Path $projectRoot "native_bin") -Label "原生性能采集目录"
+Resolve-RequiredPath -Path (Join-Path $nativeBin "native_frame_capture.dll") -Label "原生帧采集 DLL" | Out-Null
 Resolve-RequiredPath -Path (Join-Path $tracyBin "tracy-capture.exe") -Label "Tracy capture CLI" | Out-Null
 Resolve-RequiredPath -Path (Join-Path $tracyBin "tracy-csvexport.exe") -Label "Tracy CSV export CLI" | Out-Null
 Resolve-RequiredPath -Path (Join-Path $tracyBin "TRACY_LICENSE.txt") -Label "Tracy 许可证" | Out-Null
@@ -160,6 +162,7 @@ $arguments = @(
     "--include-data-file=$thirdPartyNotices=THIRD_PARTY_NOTICES.md",
     "--include-data-dir=$(Join-Path $projectRoot 'qml')=qml",
     "--include-data-dir=$tracyBin=tracy_bin",
+    "--include-data-dir=$nativeBin=native_bin",
     "--include-data-dir=$engineQml=prismqml\PrismQML"
 )
 if ($NuitkaJobs -gt 0) {

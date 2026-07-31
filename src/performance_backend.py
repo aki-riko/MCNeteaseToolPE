@@ -10,8 +10,8 @@ from typing import Callable
 
 from PySide6.QtCore import QObject, Property, QProcess, QTimer, Signal, Slot
 
-from .airperf_backend import AirPerfMonitor
 from .config import TRACY_PROBE_INTERVAL_MS
+from .native_performance_monitor import NativePerformanceMonitor
 from .performance_monitor import MCSTUDIO_ROOT_ENV, PerformanceToolLocator, ProcessDescriptor
 from .performance_monitor import ProcessSample, WindowsProcessSampler
 from .performance_snippets import (
@@ -109,7 +109,7 @@ class PerformanceBackend(QObject):
             self._sampler,
             WindowsProcessSampler,
         )
-        self._airperf = airperf_monitor or AirPerfMonitor(self.stateChanged.emit)
+        self._airperf = airperf_monitor or NativePerformanceMonitor(self.stateChanged.emit)
         self._timer = QTimer(self)
         self._timer.setInterval(SAMPLE_INTERVAL_MS)
         self._timer.timeout.connect(self._sample_selected_process)

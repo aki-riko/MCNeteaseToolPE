@@ -21,3 +21,10 @@
 - 使用范围：改编其原生 Tracy 抓取、CSV 归约和前后采样对比设计；本项目没有注册或复制其 MCP 服务。
 
 完整许可证文本见 `tracy_bin/MCDK_MCP_TRACY_LICENSE.txt`。
+
+## Windows ETW Provider 描述符参考
+
+- 项目：https://github.com/GameTechDev/PresentMon
+- 参考提交：`700e528247f08c43f55890973899f50517cec49c`
+- 许可证：MIT
+- 使用范围：仅核对公开的 DXGI/D3D9 Provider GUID 与 Present Start/Stop 事件 ID；`native/native_frame_capture.cpp` 为本项目独立实现，不加载或分发 PresentMon DLL。

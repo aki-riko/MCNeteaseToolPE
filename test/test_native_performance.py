@@ -4,9 +4,16 @@
 
 from __future__ import annotations
 
+import ctypes
 from pathlib import Path
 
 from src.native_gpu_metrics import GpuMetricsError
+from src.native_frame_metrics import (
+    NATIVE_FRAME_DLL,
+    NativeFrameMetrics,
+    bundled_native_metrics_dir,
+    summarize_frame_intervals,
+)
 from src.native_performance import NativePerformanceSession
 from src.native_windows_metrics import NativeWindowsMetrics, PDH_FMT_LONG
 
@@ -92,15 +99,32 @@ class _FakeGpu:
         self.closed = True
 
 
+class _FakeFrames:
+    def __init__(self) -> None:
+        self.pid = 0
+        self.closed = False
+
+    def open(self, pid: int) -> None:
+        self.pid = pid
+
+    def sample(self) -> dict[str, float]:
+        return {"frameAverageFps": 60.0, "frameJankCount": 1.0}
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def test_native_session_merges_windows_and_driver_metrics() -> None:
     windows = _FakeWindows()
     gpu = _FakeGpu()
+    frames = _FakeFrames()
     session = NativePerformanceSession(
         Path("ignored"),
         4242,
         "ModPC.exe",
         windows_factory=lambda: windows,  # type: ignore[arg-type]
         gpu_factory=lambda: gpu,  # type: ignore[arg-type]
+        frame_factory=lambda: frames,  # type: ignore[arg-type]
     )
     session.open()
 
@@ -108,11 +132,16 @@ def test_native_session_merges_windows_and_driver_metrics() -> None:
         "systemCpuPercent": 25.0,
         "gpuUsagePercent": 75.0,
         "gpuBusPercent": 12.0,
+        "frameAverageFps": 60.0,
+        "frameJankCount": 1.0,
     }
     session.close()
     assert windows.opened == (4242, "ModPC.exe")
     assert windows.closed is True
     assert gpu.closed is True
+    assert frames.pid == 4242
+    assert frames.closed is True
+    assert session.warnings == ()
 
 
 def test_native_session_keeps_windows_metrics_when_gpu_is_unavailable() -> None:
@@ -123,8 +152,35 @@ def test_native_session_keeps_windows_metrics_when_gpu_is_unavailable() -> None:
         "ModPC.exe",
         windows_factory=lambda: windows,  # type: ignore[arg-type]
         gpu_factory=lambda: _FakeGpu(fail=True),  # type: ignore[arg-type]
+        frame_factory=lambda: _FakeFrames(),  # type: ignore[arg-type]
     )
     session.open()
 
-    assert session.sample() == {"systemCpuPercent": 25.0}
+    assert session.sample() == {
+        "systemCpuPercent": 25.0,
+        "frameAverageFps": 60.0,
+        "frameJankCount": 1.0,
+    }
+    assert session.warnings == ("GPU：无 NVIDIA GPU",)
     session.close()
+
+
+def test_frame_summary_calculates_fps_tail_and_jank_without_raw_history() -> None:
+    intervals = [16.0] * 97 + [34.0, 70.0, 120.0]
+    summary = summarize_frame_intervals(intervals, [1.0] * 100)
+
+    assert summary["frameWindowCount"] == 100.0
+    assert summary["frameAverageFps"] > 50.0
+    assert summary["frameP1LowFps"] < 15.0
+    assert summary["frameJankWindowCount"] == 3.0
+    assert summary["frameBigJankWindowCount"] == 1.0
+    assert summary["presentCallAverageMs"] == 1.0
+
+
+def test_native_frame_dll_exports_validated_abi() -> None:
+    path = bundled_native_metrics_dir({}) / NATIVE_FRAME_DLL
+    library = ctypes.CDLL(str(path))
+    NativeFrameMetrics._configure(library)
+
+    assert library.StartNativeFrameCapture(0, 1) == 87
+    assert library.StopNativeFrameCapture() == 0

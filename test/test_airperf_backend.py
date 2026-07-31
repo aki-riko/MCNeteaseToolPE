@@ -12,11 +12,7 @@ import zlib
 
 import pytest
 
-from src.airperf_backend import (
-    AirPerfMonitor,
-    AirPerfSession,
-    build_airperf_report_metrics,
-)
+from src.airperf_backend import AirPerfSession
 from src.airperf_protocol import (
     AirPerfProtocol,
     AirPerfProtocolError,
@@ -30,6 +26,10 @@ from src.airperf_runtime import (
     CARCHIVE_MAGIC,
     extract_aphost_runtime,
     find_airperf_libzmq,
+)
+from src.native_performance_monitor import (
+    NativePerformanceMonitor as AirPerfMonitor,
+    build_native_report_metrics as build_airperf_report_metrics,
 )
 
 
