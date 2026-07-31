@@ -381,12 +381,10 @@ def test_performance_page_is_registered_and_declares_fidelity_boundary() -> None
     for contract in (
         'objectName: "tracyAnalysisCard"',
         'objectName: "tracyDurationSpinBox"',
-        'objectName: "tracyCaptureBeforeButton"',
-        'objectName: "tracyCaptureAfterButton"',
-        'objectName: "tracyCaptureSelector"',
-        'objectName: "tracyBaselineSelector"',
-        'objectName: "tracyComparisonSelector"',
-        'objectName: "tracyCompareButton"',
+        'objectName: "tracyCaptureButton"',
+        'objectName: "tracyResetButton"',
+        'qsTr("采集复测并对比")',
+        'qsTr("再次复测并对比")',
         'qsTr("新增")',
         'qsTr("消失")',
         'qsTr("Tracy 端口可达")',
@@ -447,11 +445,31 @@ for name in (
     'performanceProfileCard', 'performanceThresholdCard',
     'performanceProcessSelector', 'performanceCpuChart', 'performanceMemoryChart',
     'tracyAnalysisCard', 'tracyDurationSpinBox',
-    'tracyCaptureBeforeButton', 'tracyCaptureAfterButton',
-    'tracyCaptureSelector', 'tracyBaselineSelector',
-    'tracyComparisonSelector', 'tracyCompareButton',
+    'tracyCaptureButton', 'tracyResetButton',
 ):
     assert page.findChild(QObject, name) is not None, name
+tracy_card = page.findChild(QObject, 'tracyAnalysisCard')
+capture_button = page.findChild(QObject, 'tracyCaptureButton')
+duration_spin = page.findChild(QObject, 'tracyDurationSpinBox')
+assert capture_button.property('text') == '采集基线'
+baseline = {{
+    'id': 'capture-1', 'text': '基线', 'label': 'before',
+    'seconds': 10, 'matchedFunctions': 1,
+}}
+tracy_card.setProperty('state', {{
+    'binAvailable': True, 'reachable': True, 'busy': False,
+    'captures': [baseline], 'selectedCaptureId': 'capture-1',
+    'baselineCaptureId': 'capture-1', 'comparisonCaptureId': '',
+    'hotspots': [], 'diff': {{}},
+}})
+app.processEvents()
+assert capture_button.property('text') == '采集复测并对比'
+assert duration_spin.property('enabled') is False
+comparison_state = tracy_card.property('state')
+comparison_state['comparisonCaptureId'] = 'capture-2'
+tracy_card.setProperty('state', comparison_state)
+app.processEvents()
+assert capture_button.property('text') == '再次复测并对比'
 backend.startMonitoring()
 app.processEvents()
 assert page.findChild(QObject, 'performanceCpuValue').property('text') == '10.0%'

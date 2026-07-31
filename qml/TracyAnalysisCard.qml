@@ -15,7 +15,10 @@ Card {
     readonly property var diff: state.diff || ({})
     readonly property bool ready: state.binAvailable === true && state.reachable === true
     readonly property bool busy: state.busy === true
+    readonly property bool hasBaseline: String(state.baselineCaptureId || "") !== ""
+    readonly property bool hasComparison: String(state.comparisonCaptureId || "") !== ""
     readonly property var selectedSummary: _captureById(state.selectedCaptureId || "")
+    readonly property var baselineSummary: _captureById(state.baselineCaptureId || "")
     readonly property var diffRows: {
         var rows = []
         var improved = diff.improved || []
@@ -75,6 +78,22 @@ Card {
         if (kind === "improved") return Enums.statusLevel.success
         if (kind === "regressed") return Enums.statusLevel.warning
         return Enums.statusLevel.info
+    }
+
+    function _captureButtonText() {
+        if (busy) return qsTr("采样中…")
+        if (!hasBaseline) return qsTr("采集基线")
+        if (!hasComparison) return qsTr("采集复测并对比")
+        return qsTr("再次复测并对比")
+    }
+
+    function _captureNext() {
+        if (!backend) return
+        backend.captureTracy(
+            Math.round(durationSpin.value),
+            filterInput.text,
+            hasBaseline ? "after" : "before"
+        )
     }
 
     Column {
@@ -146,7 +165,7 @@ Card {
                 decimals: 0
                 suffix: qsTr(" 秒")
                 value: 10
-                enabled: !root.busy
+                enabled: !root.busy && !root.hasBaseline
             }
             LineEdit {
                 id: filterInput
@@ -156,26 +175,15 @@ Card {
                 enabled: !root.busy
             }
             Button {
-                objectName: "tracyCaptureBeforeButton"
-                text: root.busy ? qsTr("采样中…") : qsTr("采集基线")
-                style: Enums.button.style_primary
-                enabled: root.ready && !root.busy && root.backend !== null
-                onClicked: root.backend.captureTracy(
-                    Math.round(durationSpin.value), filterInput.text, "before"
-                )
-            }
-            Button {
-                objectName: "tracyCaptureAfterButton"
-                text: root.busy ? qsTr("采样中…") : qsTr("采集复测")
+                objectName: "tracyCaptureButton"
+                text: root._captureButtonText()
                 style: Enums.button.style_filled
                 enabled: root.ready && !root.busy && root.backend !== null
-                onClicked: root.backend.captureTracy(
-                    Math.round(durationSpin.value), filterInput.text, "after"
-                )
+                onClicked: root._captureNext()
             }
             Button {
-                objectName: "tracyClearButton"
-                text: qsTr("清空")
+                objectName: "tracyResetButton"
+                text: qsTr("重新开始")
                 style: Enums.button.style_default
                 enabled: !root.busy && root.captures.length > 0
                 onClicked: root.backend.clearTracyCaptures()
@@ -183,30 +191,31 @@ Card {
         }
 
         Label {
-            visible: root.busy
             width: parent ? parent.width : 0
-            text: qsTr("正在抓取 Tracy 数据；请保持目标玩法持续运行，窗口结束后会自动生成函数排行。")
-            color: Enums.statusLevel.warningColor
+            text: root.busy
+                  ? qsTr("正在采样；请在游戏内持续触发要测的玩法。")
+                  : (!root.hasBaseline
+                     ? qsTr("第 1 步：采集基线。完成后，同一个按钮会自动进入复测对比。")
+                     : qsTr("基线已固定为 %1 秒；现在修改代码或场景后，直接采集复测。")
+                       .arg(root.baselineSummary.seconds || durationSpin.value))
+            color: root.busy ? Enums.statusLevel.warningColor : Enums.textColor.secondary
             wrapMode: Text.WordWrap
         }
 
         RowLayout {
             width: parent ? parent.width : 0
             spacing: Enums.spacing.m
+            visible: root.captures.length > 0
 
-            Label { text: qsTr("当前采样"); font.bold: true }
-            ComboBoxDefault {
-                objectName: "tracyCaptureSelector"
+            Label {
                 Layout.fillWidth: true
-                model: root.captures
-                currentIndex: root._captureIndex(root.state.selectedCaptureId || "")
-                placeholderText: qsTr("尚无 Tracy 采样")
-                enabled: root.captures.length > 0 && !root.busy
-                onActivated: function(index) {
-                    if (index >= 0 && index < root.captures.length) {
-                        root.backend.selectTracyCapture(String(root.captures[index].id))
-                    }
-                }
+                text: root.selectedSummary.label === "before"
+                      ? qsTr("基线结果") : qsTr("最新复测结果")
+                font.bold: true
+            }
+            Tag {
+                text: qsTr("%1 个函数").arg(root.selectedSummary.matchedFunctions || 0)
+                status: Enums.statusLevel.info
             }
             Tag {
                 visible: Number(root.selectedSummary.frames || 0) > 0
@@ -256,48 +265,7 @@ Card {
             }
         }
 
-        Separator { width: parent ? parent.width : 0; visible: root.captures.length > 0 }
-
-        RowLayout {
-            width: parent ? parent.width : 0
-            spacing: Enums.spacing.m
-            visible: root.captures.length > 0
-
-            Label { text: qsTr("基线"); font.bold: true }
-            ComboBoxDefault {
-                objectName: "tracyBaselineSelector"
-                Layout.fillWidth: true
-                model: root.captures
-                currentIndex: root._captureIndex(root.state.baselineCaptureId || "")
-                onActivated: function(index) {
-                    if (index >= 0 && index < root.captures.length) {
-                        root.backend.selectTracyBaseline(String(root.captures[index].id))
-                    }
-                }
-            }
-            Label { text: qsTr("复测"); font.bold: true }
-            ComboBoxDefault {
-                objectName: "tracyComparisonSelector"
-                Layout.fillWidth: true
-                model: root.captures
-                currentIndex: root._captureIndex(root.state.comparisonCaptureId || "")
-                onActivated: function(index) {
-                    if (index >= 0 && index < root.captures.length) {
-                        root.backend.selectTracyComparison(String(root.captures[index].id))
-                    }
-                }
-            }
-            Button {
-                objectName: "tracyCompareButton"
-                text: qsTr("重新对比")
-                style: Enums.button.style_primary
-                enabled: !root.busy
-                         && String(root.state.baselineCaptureId || "") !== ""
-                         && String(root.state.comparisonCaptureId || "") !== ""
-                         && String(root.state.baselineCaptureId) !== String(root.state.comparisonCaptureId)
-                onClicked: root.backend.compareTracyCaptures(filterInput.text)
-            }
-        }
+        Separator { width: parent ? parent.width : 0; visible: root.diff.summary !== undefined }
 
         Column {
             width: parent ? parent.width : 0

@@ -167,3 +167,28 @@ def test_controller_rejects_duration_before_scheduling(monkeypatch) -> None:
     assert controller.state["busy"] is False
     assert results[-1][0] is False
     assert "采样时长必须在" in results[-1][1]
+
+
+def test_controller_requires_baseline_and_same_duration_for_comparison(monkeypatch) -> None:
+    handle = _FakeTaskHandle()
+    scheduled: list[tuple[object, ...]] = []
+    results: list[tuple[bool, str]] = []
+
+    def fake_run_in_pool(_operation, *arguments):
+        scheduled.append(arguments)
+        return handle
+
+    monkeypatch.setattr("prismqml.run_in_pool", fake_run_in_pool)
+    controller = _controller(results)
+
+    controller.capture(10, "", "after")
+    assert scheduled == []
+    assert "先采集基线" in results[-1][1]
+
+    controller.capture(10, "", "before")
+    handle.succeeded.emit(_capture_payload(20.0, seconds=10))
+    controller.capture(5, "", "after")
+
+    assert len(scheduled) == 1
+    assert controller.state["busy"] is False
+    assert "基线相同" in results[-1][1]

@@ -94,10 +94,24 @@ class TracyPerformanceController:
                 f"Tracy 采样时长必须在 1-{MAX_CAPTURE_SECONDS} 秒之间",
             )
             return
+        if not self._comparison_window_is_valid(duration, capture_label):
+            return
         self.refresh_status()
         if not self._capture_is_ready():
             return
         self._start_capture_task(duration, name_contains.strip(), capture_label)
+
+    def _comparison_window_is_valid(self, duration: int, label: str) -> bool:
+        if label != "after":
+            return True
+        baseline = self._captures.get(self._baseline_capture_id)
+        if baseline is None:
+            self._emit_result(False, "请先采集基线，再进行复测")
+            return False
+        if int(baseline.get("seconds", 0)) != duration:
+            self._emit_result(False, "复测时长必须与 Tracy 基线相同")
+            return False
+        return True
 
     def _validate_capture_request(self, label: str) -> str | None:
         if self._busy:

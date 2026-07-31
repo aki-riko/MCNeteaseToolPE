@@ -106,7 +106,9 @@ $env:MCNETEASE_MCSTUDIO_ROOT = "MCSTUDIO_ROOT"
 函数热点卡片不经过 MCP，直接连接本机 ModPC 内嵌的 Tracy TCP 端点，并调用随程序分发的
 Tracy v0.11.1 `tracy-capture` 与 `tracy-csvexport`。默认端点来自配置，可用
 `MCNETEASE_TRACY_HOST` 和 `MCNETEASE_TRACY_PORT` 覆盖；主机仅接受回环地址。CLI 目录可用
-`MCNETEASE_TRACY_BIN_DIR` 覆盖，也兼容上游的 `TRACY_BIN_DIR`。采集时应持续触发真实玩法负载，
+`MCNETEASE_TRACY_BIN_DIR` 覆盖，也兼容上游的 `TRACY_BIN_DIR`。界面只需使用同一个主按钮：
+第一次采集基线，修改后再次点击便会自动采集复测并生成对比；“重新开始”可更换采样时长和基线。
+采集时应持续触发真实玩法负载，
 基线与复测必须使用同一设备、同一场景和相同时长；页面显示的是采样窗口内 `Frames / seconds`
 平均值，不等于网易手机集群 p1/p5 或机审平均帧率。
 
