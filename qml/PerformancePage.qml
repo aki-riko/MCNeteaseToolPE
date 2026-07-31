@@ -12,6 +12,7 @@ Item {
     property var _state: backend ? (backend.state || {}) : ({})
     readonly property var _tools: _state.tools || ({})
     readonly property var _processes: _state.processes || []
+    readonly property var _tracy: _state.tracy || ({})
 
     function _tool(key) {
         return root._tools[key] || ({ "available": false, "path": "" })
@@ -194,6 +195,12 @@ Item {
                         }
                     }
                 }
+            }
+
+            TracyAnalysisCard {
+                width: parent ? parent.width : 0
+                backend: root.backend
+                state: root._tracy
             }
 
             Card {

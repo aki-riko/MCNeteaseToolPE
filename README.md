@@ -39,7 +39,8 @@ MCNeteaseToolPE 面向网易 MC 中国版的地图与组件开发者,在提交�
   LevelDB sequence 与内容指纹，再追加 WAL 并重读验证，失败时自动回滚。
 - **📈 性能诊断**：自动发现 MCStudio 自带的 Tracy 与 AirPerf，按需启动官方工具；
   无额外依赖地监测 ModPC/Minecraft 进程的 CPU、当前工作集和峰值工作集，并绘制最近
-  120 秒曲线。页面还提供网易公开的服务端 CPU/内存火焰图 ModAPI 示例与当前公开性能标准。
+  120 秒曲线；还可直连 ModPC 内嵌 Tracy，采集函数 self/total/calls 热点并做等时长
+  基线/复测 diff。页面另提供网易公开的服务端 CPU/内存火焰图 ModAPI 示例与当前公开性能标准。
 
 ## 🚀 基于 PrismQML 引擎
 
@@ -87,7 +88,8 @@ Minecraft 数据目录。
 
 ## 📈 性能诊断
 
-“性能诊断”页面只桥接本机已经安装的官方性能工具，不复制或重新分发 MCStudio 文件。
+“性能诊断”页面的 Tracy GUI 与 AirPerf 入口只桥接本机已经安装的官方性能工具，
+不复制或重新分发 MCStudio 文件。
 程序按显式环境变量、`PATH`、Windows 程序目录的顺序查找 MCStudio；非标准安装位置可用
 `MCNETEASE_MCSTUDIO_ROOT` 指定，例如：
 
@@ -100,6 +102,13 @@ $env:MCNETEASE_MCSTUDIO_ROOT = "MCSTUDIO_ROOT"
 火焰图按钮复制网易公开的 `StartProfile`/`StopProfile` 与
 `StartMemProfile`/`StopMemProfile` 调试脚本，生成的 SVG 位于 ModPC 目录；提审前必须
 移除项目中的诊断调用。
+
+函数热点卡片不经过 MCP，直接连接本机 ModPC 内嵌的 Tracy TCP 端点，并调用随程序分发的
+Tracy v0.11.1 `tracy-capture` 与 `tracy-csvexport`。默认端点来自配置，可用
+`MCNETEASE_TRACY_HOST` 和 `MCNETEASE_TRACY_PORT` 覆盖；主机仅接受回环地址。CLI 目录可用
+`MCNETEASE_TRACY_BIN_DIR` 覆盖，也兼容上游的 `TRACY_BIN_DIR`。采集时应持续触发真实玩法负载，
+基线与复测必须使用同一设备、同一场景和相同时长；页面显示的是采样窗口内 `Frames / seconds`
+平均值，不等于网易手机集群 p1/p5 或机审平均帧率。
 
 网易公开的达标线为加载时长 `<120s`、内存峰值 `<450MB`、平均帧率 `>40`，但没有公开
 手机集群的测试场景、采样窗口、FPS 数据源与卡顿阈值。本页的 Win PC 进程数据用于观察
@@ -196,6 +205,7 @@ CodeReviewError，与模块白名单违规共同阻止审核通过。未配置 P
 构建脚本会把 Python 2.7 解释器、`pylint==1.9.5`、`astroid==1.6.6`、
 必要传递依赖复制到 `runtime/python27`。未内置补全库时，Python 2.7 语法与 E 类错误
 审核仍会运行，网易模块导入继续由内置白名单检查；授权不明确的补全库不得放进发布包。
+构建还会校验并纳入 `tracy_bin` 中的两枚官方 CLI 与许可证文件。
 
 ## 🚀 CI/CD 发布
 
@@ -236,4 +246,5 @@ iscc /DMyAppVersion=0.1.0.5 /DBuildDir="build\nuitka-release\main.dist" installe
 Copyright (C) 2026 aki-riko
 
 本项目采用 [GNU General Public License v3.0 or later](LICENSE)，SPDX 标识为
-`GPL-3.0-or-later`。PrismQML 与其他第三方组件继续适用各自的许可证。
+`GPL-3.0-or-later`。PrismQML 与其他第三方组件继续适用各自的许可证，详见
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。

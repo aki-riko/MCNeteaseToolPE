@@ -17,6 +17,7 @@ from .performance_monitor import (
     ProcessSample,
     WindowsProcessSampler,
 )
+from .tracy_backend import MAX_TRACY_CAPTURES, TracyPerformanceController
 
 
 LOGGER = logging.getLogger(__name__)
@@ -92,6 +93,10 @@ class PerformanceBackend(QObject):
         sampler: object | None = None,
         launcher: Callable[[Path], bool] | None = None,
         clipboard_setter: Callable[[str], None] | None = None,
+        tracy_probe: Callable[[], dict[str, object]] | None = None,
+        tracy_capture_runner: (
+            Callable[[int, str, int], dict[str, object]] | None
+        ) = None,
     ) -> None:
         super().__init__(parent)
         self._locator = locator or PerformanceToolLocator()
@@ -106,6 +111,12 @@ class PerformanceBackend(QObject):
         self._cpu_history: list[dict[str, object]] = []
         self._memory_history: list[dict[str, object]] = []
         self._sample_number = 0
+        self._tracy = TracyPerformanceController(
+            self.stateChanged.emit,
+            self._emit_result,
+            probe=tracy_probe,
+            capture_runner=tracy_capture_runner,
+        )
         self._timer = QTimer(self)
         self._timer.setInterval(SAMPLE_INTERVAL_MS)
         self._timer.timeout.connect(self._sample_selected_process)
@@ -138,6 +149,7 @@ class PerformanceBackend(QObject):
             "peakWorkingSetMb": round(sample.peak_working_set_mb, 1) if sample else 0.0,
             "cpuHistory": list(self._cpu_history),
             "memoryHistory": list(self._memory_history),
+            "tracy": self._tracy.state,
         }
 
     @staticmethod
@@ -148,6 +160,7 @@ class PerformanceBackend(QObject):
     def refresh(self) -> None:
         self._discovery = self._locator.discover()
         self._refresh_processes()
+        self._tracy.refresh_status()
         self.stateChanged.emit()
 
     def _refresh_processes(self) -> None:
@@ -246,6 +259,35 @@ class PerformanceBackend(QObject):
         self._memory_history = self._memory_history[-MAX_HISTORY_SAMPLES:]
 
     @Slot()
+    def refreshTracyStatus(self) -> None:
+        self._tracy.refresh_status()
+        self.stateChanged.emit()
+
+    @Slot(int, str, str)
+    def captureTracy(self, seconds: int, name_contains: str, label: str) -> None:
+        self._tracy.capture(seconds, name_contains, label)
+
+    @Slot(str)
+    def selectTracyCapture(self, capture_id: str) -> None:
+        self._tracy.select_capture(capture_id)
+
+    @Slot(str)
+    def selectTracyBaseline(self, capture_id: str) -> None:
+        self._tracy.select_baseline(capture_id)
+
+    @Slot(str)
+    def selectTracyComparison(self, capture_id: str) -> None:
+        self._tracy.select_comparison(capture_id)
+
+    @Slot(str)
+    def compareTracyCaptures(self, name_contains: str) -> None:
+        self._tracy.compare(name_contains)
+
+    @Slot()
+    def clearTracyCaptures(self) -> None:
+        self._tracy.clear()
+
+    @Slot()
     def launchTracy(self) -> None:
         self._launch_tool("tracy", "方块探针（Tracy）")
 
@@ -289,6 +331,7 @@ class PerformanceBackend(QObject):
 __all__ = [
     "CPU_PROFILE_SNIPPET",
     "MAX_HISTORY_SAMPLES",
+    "MAX_TRACY_CAPTURES",
     "MEMORY_PROFILE_SNIPPET",
     "PROFILE_SNIPPETS",
     "PerformanceBackend",

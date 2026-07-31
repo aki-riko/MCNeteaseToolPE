@@ -79,6 +79,12 @@ $entryPoint = Resolve-RequiredPath -Path (Join-Path $projectRoot "main.py") -Lab
 $appIconPng = Resolve-RequiredPath -Path (Join-Path $projectRoot "assets\app_icon.png") -Label "应用 PNG 图标"
 $moduleWhitelist = Resolve-RequiredPath -Path (Join-Path $projectRoot "src\netease_python_module_whitelist.txt") -Label "网易 Python 模块白名单"
 $legacyWorker = Resolve-RequiredPath -Path (Join-Path $projectRoot "src\legacy_pylint_worker.py") -Label "Python 2.7 审核 worker"
+$thirdPartyNotices = Resolve-RequiredPath -Path (Join-Path $projectRoot "THIRD_PARTY_NOTICES.md") -Label "第三方组件声明"
+$tracyBin = Resolve-RequiredPath -Path (Join-Path $projectRoot "tracy_bin") -Label "Tracy CLI 目录"
+Resolve-RequiredPath -Path (Join-Path $tracyBin "tracy-capture.exe") -Label "Tracy capture CLI" | Out-Null
+Resolve-RequiredPath -Path (Join-Path $tracyBin "tracy-csvexport.exe") -Label "Tracy CSV export CLI" | Out-Null
+Resolve-RequiredPath -Path (Join-Path $tracyBin "TRACY_LICENSE.txt") -Label "Tracy 许可证" | Out-Null
+Resolve-RequiredPath -Path (Join-Path $tracyBin "MCDK_MCP_TRACY_LICENSE.txt") -Label "mcdk-mcp-tracy 许可证" | Out-Null
 $python27Root = Resolve-RequiredPath -Path $Python27Root -Label "Python 2.7 根目录"
 $python27 = Resolve-RequiredPath -Path (Join-Path $python27Root "python.exe") -Label "Python 2.7 解释器"
 $python27License = Resolve-RequiredPath -Path (Join-Path $python27Root "LICENSE.txt") -Label "Python 2.7 许可证"
@@ -151,7 +157,9 @@ $arguments = @(
     "--include-data-file=$appIconPng=assets/app_icon.png",
     "--include-data-file=$moduleWhitelist=src/netease_python_module_whitelist.txt",
     "--include-data-file=$legacyWorker=src/legacy_pylint_worker.py",
+    "--include-data-file=$thirdPartyNotices=THIRD_PARTY_NOTICES.md",
     "--include-data-dir=$(Join-Path $projectRoot 'qml')=qml",
+    "--include-data-dir=$tracyBin=tracy_bin",
     "--include-data-dir=$engineQml=prismqml\PrismQML"
 )
 if ($NuitkaJobs -gt 0) {

@@ -30,6 +30,7 @@ from src.performance_monitor import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAIN = REPO_ROOT / "main.py"
 PAGE = REPO_ROOT / "qml" / "PerformancePage.qml"
+TRACY_CARD = REPO_ROOT / "qml" / "TracyAnalysisCard.qml"
 
 
 class _FakeLocator:
@@ -357,6 +358,7 @@ def test_profile_snippets_use_only_documented_modapi_and_copy(tmp_path: Path) ->
 def test_performance_page_is_registered_and_declares_fidelity_boundary() -> None:
     main_source = MAIN.read_text(encoding="utf-8")
     page_source = PAGE.read_text(encoding="utf-8")
+    tracy_source = TRACY_CARD.read_text(encoding="utf-8")
 
     assert "performance_backend = PerformanceBackend()" in main_source
     assert '_page_factory("PerformancePage.qml", performance_backend)' in main_source
@@ -369,12 +371,25 @@ def test_performance_page_is_registered_and_declares_fidelity_boundary() -> None
         'objectName: "performanceThresholdCard"',
         'objectName: "performanceCpuChart"',
         'objectName: "performanceMemoryChart"',
+        "TracyAnalysisCard",
         'backend.copyProfileSnippet("cpu")',
         'backend.copyProfileSnippet("memory")',
         "不能直接替代网易手机集群",
         "官方未公开采样窗口",
     ):
         assert contract in page_source
+    for contract in (
+        'objectName: "tracyAnalysisCard"',
+        'objectName: "tracyDurationSpinBox"',
+        'objectName: "tracyCaptureBeforeButton"',
+        'objectName: "tracyCaptureAfterButton"',
+        'objectName: "tracyCaptureSelector"',
+        'objectName: "tracyBaselineSelector"',
+        'objectName: "tracyComparisonSelector"',
+        'objectName: "tracyCompareButton"',
+        "窗口平均 FPS 不等于网易手机集群的 p1/p5 或机审平均帧率",
+    ):
+        assert contract in tracy_source
 
 
 def test_performance_page_loads_offscreen() -> None:
@@ -428,6 +443,10 @@ for name in (
     'performanceOfficialToolsCard', 'performanceProcessCard',
     'performanceProfileCard', 'performanceThresholdCard',
     'performanceProcessSelector', 'performanceCpuChart', 'performanceMemoryChart',
+    'tracyAnalysisCard', 'tracyDurationSpinBox',
+    'tracyCaptureBeforeButton', 'tracyCaptureAfterButton',
+    'tracyCaptureSelector', 'tracyBaselineSelector',
+    'tracyComparisonSelector', 'tracyCompareButton',
 ):
     assert page.findChild(QObject, name) is not None, name
 backend.startMonitoring()
