@@ -210,7 +210,7 @@ class PerformanceBackend(QObject):
         if self._monitoring or tracy_needs_stop or self._airperf.state.get("active"):
             self._stop_unified_monitoring(
                 "目标进程已退出，监测正在结束",
-                success=False,
+                success=True,
                 manual=False,
             )
         self._selected_pid = self._processes[0].pid if self._processes else 0
@@ -364,7 +364,13 @@ class PerformanceBackend(QObject):
         try:
             sample = self._sampler.sample(self._selected_pid)
         except (OSError, ProcessLookupError) as error:
-            LOGGER.warning("采样进程 PID %s 失败：%s", self._selected_pid, error)
+            failed_pid = self._selected_pid
+            LOGGER.warning("采样进程 PID %s 失败：%s", failed_pid, error)
+            self._refresh_processes(report_errors=False)
+            available_pids = {item.pid for item in self._processes}
+            if failed_pid not in available_pids:
+                self.stateChanged.emit()
+                return
             if self._tracy.continuous_active:
                 self._stop_unified_monitoring(
                     f"目标进程不可用：{error}，监测正在结束",
@@ -373,7 +379,6 @@ class PerformanceBackend(QObject):
                 )
             else:
                 self._stop_monitoring(f"目标进程不可用：{error}", success=False)
-            self._refresh_processes()
             self.stateChanged.emit()
             return
         self._last_sample = sample

@@ -672,11 +672,11 @@ def test_sampling_process_exit_stops_timer_and_refreshes_processes(tmp_path: Pat
     assert backend.state["selectedPid"] == 0
     assert backend.state["processes"] == []
     assert backend._timer.isActive() is False
-    assert results[-1]["success"] is False
-    assert "目标进程不可用" in str(results[-1]["message"])
+    assert results[-1]["success"] is True
+    assert "目标进程已退出" in str(results[-1]["message"])
 
 
-def test_refresh_process_exit_stops_monitoring_as_failure(tmp_path: Path) -> None:
+def test_refresh_process_exit_stops_monitoring_as_success(tmp_path: Path) -> None:
     _application()
     sampler = _FakeSampler()
     results: list[dict[str, object]] = []
@@ -691,8 +691,25 @@ def test_refresh_process_exit_stops_monitoring_as_failure(tmp_path: Path) -> Non
     assert backend.state["monitoring"] is False
     assert backend.state["selectedPid"] == 0
     assert backend._timer.isActive() is False
-    assert results[-1]["success"] is False
+    assert results[-1]["success"] is True
     assert "目标进程已退出" in str(results[-1]["message"])
+
+
+def test_sampling_error_for_live_process_remains_failure(tmp_path: Path) -> None:
+    _application()
+    sampler = _FakeSampler()
+    sampler.sample_error = OSError("拒绝访问")
+    results: list[dict[str, object]] = []
+    backend = PerformanceBackend(locator=_FakeLocator(tmp_path), sampler=sampler)
+    backend.result.connect(results.append)
+    backend.refresh()
+
+    backend.startMonitoring()
+
+    assert backend.state["monitoring"] is False
+    assert backend.state["selectedPid"] == 42
+    assert results[-1]["success"] is False
+    assert "目标进程不可用" in str(results[-1]["message"])
 
 
 def test_automatic_refresh_detects_process_exit_while_monitoring(
@@ -704,6 +721,7 @@ def test_automatic_refresh_detects_process_exit_while_monitoring(
     handle = _FakeTaskHandle()
     sampler = _FakeSampler()
     airperf = _FakeAirPerfMonitor()
+    results: list[dict[str, object]] = []
     monkeypatch.setattr(
         "prismqml.run_in_pool", lambda _operation, *_arguments: handle
     )
@@ -715,6 +733,7 @@ def test_automatic_refresh_detects_process_exit_while_monitoring(
         airperf_monitor=airperf,
         automatic_stability_ms=0,
     )
+    backend.result.connect(results.append)
     backend.refreshPerformanceTarget()
     assert backend.state["unifiedMonitoring"] is True
 
@@ -725,6 +744,8 @@ def test_automatic_refresh_detects_process_exit_while_monitoring(
     assert stopping["monitoring"] is False
     assert stopping["tracy"]["stopRequested"] is True
     assert stopping["airperf"]["active"] is False
+    assert results[-1]["success"] is True
+    assert "目标进程已退出" in str(results[-1]["message"])
     handle.succeeded.emit(_tracy_capture_payload())
     finished = backend.state
     assert finished["selectedPid"] == 0
