@@ -695,6 +695,44 @@ def test_refresh_process_exit_stops_monitoring_as_failure(tmp_path: Path) -> Non
     assert "目标进程已退出" in str(results[-1]["message"])
 
 
+def test_automatic_refresh_detects_process_exit_while_monitoring(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """回归真实世界：进程退出后不得因正在采样而跳过进程清单校验。"""
+
+    _application()
+    handle = _FakeTaskHandle()
+    sampler = _FakeSampler()
+    airperf = _FakeAirPerfMonitor()
+    monkeypatch.setattr(
+        "prismqml.run_in_pool", lambda _operation, *_arguments: handle
+    )
+    backend = PerformanceBackend(
+        locator=_FakeLocator(tmp_path),
+        sampler=sampler,
+        tracy_probe=_reachable_tracy_probe,
+        tracy_capture_runner=lambda _seconds, _filter, _top: {},
+        airperf_monitor=airperf,
+        automatic_stability_ms=0,
+    )
+    backend.refreshPerformanceTarget()
+    assert backend.state["unifiedMonitoring"] is True
+
+    sampler.processes = []
+    backend.refreshPerformanceTarget()
+
+    stopping = backend.state
+    assert stopping["monitoring"] is False
+    assert stopping["tracy"]["stopRequested"] is True
+    assert stopping["airperf"]["active"] is False
+    handle.succeeded.emit(_tracy_capture_payload())
+    finished = backend.state
+    assert finished["selectedPid"] == 0
+    assert finished["unifiedMonitoring"] is False
+    assert finished["tracy"]["report"]["verdict"] == "监测完成"
+    assert finished["tracy"]["report"]["tone"] == "info"
+
+
 def test_refresh_enumeration_error_preserves_active_target(tmp_path: Path) -> None:
     _application()
     sampler = _FakeSampler()

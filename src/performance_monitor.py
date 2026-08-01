@@ -291,6 +291,8 @@ class WindowsProcessSampler:
         )
         if not success:
             raise ctypes.WinError(ctypes.get_last_error())
+        if _filetime_to_int(exit_time):
+            raise ProcessLookupError("进程已退出")
         ticks = _filetime_to_int(kernel) + _filetime_to_int(user)
         return ticks / self._FILETIME_TICKS_PER_SECOND
 

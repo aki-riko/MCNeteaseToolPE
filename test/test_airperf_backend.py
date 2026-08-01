@@ -8,6 +8,7 @@ import importlib
 import json
 from pathlib import Path
 import struct
+import threading
 import time
 import zlib
 
@@ -339,6 +340,36 @@ def test_monitor_collects_constant_space_summary_until_manual_stop() -> None:
     assert state["summary"]["systemCpuPercent"]["maximum"] >= 20
     assert any(item["label"] == "AirPerf 整机 GPU 峰值" for item in state["metrics"])
     assert changes
+
+
+def test_monitor_treats_exit_rpc_error_after_stop_as_normal_completion() -> None:
+    """目标退出触发 stop 后，飞行中的 aphost 调用失败不得污染最终报告。"""
+
+    sample_started = threading.Event()
+    release_sample = threading.Event()
+
+    class ExitRaceSession(_FakeSession):
+        def sample(self) -> dict[str, float]:
+            sample_started.set()
+            release_sample.wait(timeout=1)
+            raise AirPerfProtocolError(
+                '指定的类别中不存在实例 "Minecraft.Windows"'
+            )
+
+    monitor = AirPerfMonitor(lambda: None, ExitRaceSession, interval_ms=1)
+    assert monitor.start(Path("MCStudio"), 42, "Minecraft.Windows.exe") is True
+    assert sample_started.wait(timeout=1) is True
+
+    monitor.stop()
+    release_sample.set()
+    assert monitor._thread is not None
+    monitor._thread.join(timeout=1)
+
+    state = monitor.state
+    assert state["active"] is False
+    assert state["status"] == "complete"
+    assert state["message"] == "AirPerf 兼容采集已完成"
+    assert "不存在实例" not in str(state)
 
 
 def test_monitor_records_every_graphics_bucket_without_duplicating_system_sample() -> None:

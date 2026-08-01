@@ -399,8 +399,12 @@ class AirPerfMonitor:
                 ]
                 self._record(sample, frame_samples)
         except (AirPerfProtocolError, OSError, ProcessLookupError, TimeoutError, ValueError) as error:
-            LOGGER.warning("AirPerf 持续采集结束：%s", error)
-            self._finish("failed", f"AirPerf 兼容采集不可用：{error}")
+            if stop_event.is_set():
+                LOGGER.info("AirPerf 停止期间结束飞行中的采样：%s", error)
+                self._finish("complete", "AirPerf 兼容采集已完成")
+            else:
+                LOGGER.warning("AirPerf 持续采集结束：%s", error)
+                self._finish("failed", f"AirPerf 兼容采集不可用：{error}")
         except Exception as error:
             LOGGER.exception("AirPerf 持续采集发生未预期错误")
             self._finish("failed", f"AirPerf 兼容采集失败：{error}")

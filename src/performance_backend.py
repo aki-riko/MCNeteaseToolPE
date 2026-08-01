@@ -406,8 +406,7 @@ class PerformanceBackend(QObject):
         """持续刷新 ModPC 进程和 Tracy 状态，自动跟随晚启动或重启。"""
         if not str(self._discovery.get("root", "")).strip():
             self._discovery = self._locator.discover()
-        if not self._monitoring:
-            self._refresh_processes(report_errors=False)
+        self._refresh_processes(report_errors=False)
         self._tracy.refresh_status()
         self._start_automatic_monitoring_if_ready()
         self.stateChanged.emit()
