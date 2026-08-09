@@ -28,6 +28,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MAIN = REPO_ROOT / "main.py"
 PAGE = REPO_ROOT / "qml" / "PerformancePage.qml"
 TRACY_CARD = REPO_ROOT / "qml" / "TracyAnalysisCard.qml"
+DETAILS_PANEL = REPO_ROOT / "qml" / "PerformanceDetailsPanel.qml"
+DETAIL_COMPONENTS = (
+    DETAILS_PANEL,
+    REPO_ROOT / "qml" / "PerformanceHotspotDetailsCard.qml",
+    REPO_ROOT / "qml" / "PerformanceReportDetailsCard.qml",
+    REPO_ROOT / "qml" / "PerformanceChartsCard.qml",
+    REPO_ROOT / "qml" / "PerformanceThresholdCard.qml",
+)
 
 
 class _FakeLocator:
@@ -799,6 +807,9 @@ def test_performance_page_is_registered_and_declares_fidelity_boundary() -> None
     main_source = MAIN.read_text(encoding="utf-8")
     page_source = PAGE.read_text(encoding="utf-8")
     tracy_source = TRACY_CARD.read_text(encoding="utf-8")
+    details_source = "\n".join(
+        path.read_text(encoding="utf-8") for path in DETAIL_COMPONENTS
+    )
 
     assert "performance_backend = PerformanceBackend()" in main_source
     assert '_page_factory("PerformancePage.qml", performance_backend)' in main_source
@@ -806,14 +817,15 @@ def test_performance_page_is_registered_and_declares_fidelity_boundary() -> None
     for contract in (
         'objectName: "performancePage"',
         'objectName: "performanceProcessCard"',
-        'objectName: "performanceThresholdCard"',
-        'objectName: "performanceCpuChart"',
-        'objectName: "performanceMemoryChart"',
+        'objectName: "performanceMainScrollArea"',
+        'objectName: "performanceDetailsButton"',
+        'objectName: "performanceDetailsDrawer"',
         "TracyAnalysisCard",
+        "PerformanceDetailsPanel",
+        "Enums.drawer.mode_outside",
+        "WindowHelper.availableScreenGeometryAt",
         "进入 MC 自动开始",
         "由上方持续监测统一控制",
-        "不能直接替代网易手机集群",
-        "官方未公开采样窗口",
     ):
         assert contract in page_source
     for contract in (
@@ -824,8 +836,6 @@ def test_performance_page_is_registered_and_declares_fidelity_boundary() -> None
         'qsTr("停止并生成报告")',
         'qsTr("正在停止并生成报告…")',
         'qsTr("等待 ModPC 启动…")',
-        'qsTr("新增")',
-        'qsTr("消失")',
         "结果用于本机优化，不等于网易机审成绩",
         "backend.startUnifiedMonitoring()",
         "backend.stopUnifiedMonitoring()",
@@ -835,9 +845,29 @@ def test_performance_page_is_registered_and_declares_fidelity_boundary() -> None
         'objectName: "tracyReportTitle"',
         'objectName: "tracyReportConclusion"',
         'qsTr("优先关注")',
-        'qsTr("下一步建议")',
+        'objectName: "tracyOpenDetailsButton"',
+        "reportHighlightsModel.set",
     ):
         assert contract in tracy_source
+    for contract in (
+        'objectName: "performanceDetailsPanel"',
+        'objectName: "performanceDetailsScrollArea"',
+        'objectName: "performanceThresholdCard"',
+        'objectName: "performanceCpuChart"',
+        'objectName: "performanceMemoryChart"',
+        'objectName: "performanceHotspotList"',
+        'objectName: "performanceReportMetricsList"',
+        'objectName: "performanceDiffList"',
+        'qsTr("下一步建议")',
+        'qsTr("新增")',
+        'qsTr("消失")',
+        "bounceEnabled: false",
+        "reportMetricsModel.set",
+        "hotspotModel.set",
+        "不等于网易手机集群机审成绩",
+        "官方未公开采样窗口",
+    ):
+        assert contract in details_source
     for removed_control in (
         'objectName: "performanceOfficialToolsCard"',
         'objectName: "performanceProfileCard"',
@@ -848,4 +878,4 @@ def test_performance_page_is_registered_and_declares_fidelity_boundary() -> None
         'objectName: "tracyRefreshButton"',
         'objectName: "tracyResetButton"',
     ):
-        assert removed_control not in page_source + tracy_source
+        assert removed_control not in page_source + tracy_source + details_source

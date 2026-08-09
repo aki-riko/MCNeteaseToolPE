@@ -14,12 +14,8 @@ Card {
     property var processes: []
     property int selectedPid: 0
     readonly property var captures: state.captures || []
-    readonly property var hotspots: state.hotspots || []
-    readonly property var diff: state.diff || ({})
     readonly property var report: state.report || ({})
-    readonly property var reportMetrics: report.metrics || []
     readonly property var reportHighlights: report.highlights || []
-    readonly property var reportRecommendations: report.recommendations || []
     readonly property bool ready: state.binAvailable === true && state.reachable === true
     readonly property bool busy: state.busy === true
     readonly property bool continuousActive: performanceState.unifiedMonitoring === true
@@ -29,34 +25,11 @@ Card {
     readonly property var airperfState: performanceState.airperf || ({})
     readonly property int windowsCompleted: Number(state.windowsCompleted || 0)
     readonly property var detectedProcess: _processByPid(selectedPid)
-    readonly property var selectedSummary: _captureById(state.selectedCaptureId || "")
-    readonly property var diffRows: {
-        var rows = []
-        var groups = [
-            [diff.improved || [], "improved"],
-            [diff.regressed || [], "regressed"],
-            [diff.added || [], "added"],
-            [diff.removed || [], "removed"]
-        ]
-        for (var i = 0; i < groups.length; i++) {
-            for (var j = 0; j < groups[i][0].length; j++) {
-                var row = Object.assign({}, groups[i][0][j])
-                row.kind = groups[i][1]
-                rows.push(row)
-            }
-        }
-        return rows
-    }
+
+    signal detailsRequested()
 
     width: parent ? parent.width : 0
     autoHeight: true
-
-    function _captureById(captureId) {
-        for (var i = 0; i < captures.length; i++) {
-            if (String(captures[i].id) === String(captureId)) return captures[i]
-        }
-        return ({})
-    }
 
     function _processByPid(pid) {
         for (var i = 0; i < processes.length; i++) {
@@ -65,8 +38,20 @@ Card {
         return processes.length > 0 ? processes[0] : ({})
     }
 
-    function _number(value, decimals) {
-        return Number(value || 0).toFixed(decimals)
+    function _syncHighlights() {
+        var items = root.reportHighlights
+        while (reportHighlightsModel.count > items.length) {
+            reportHighlightsModel.remove(reportHighlightsModel.count - 1)
+        }
+        for (var i = 0; i < items.length; i++) {
+            var payload = {
+                "kind": String(items[i].kind || "hotspot"),
+                "name": String(items[i].name || ""),
+                "detail": String(items[i].detail || "")
+            }
+            if (i < reportHighlightsModel.count) reportHighlightsModel.set(i, payload)
+            else reportHighlightsModel.append(payload)
+        }
     }
 
     function _buttonText() {
@@ -108,13 +93,6 @@ Card {
             : qsTr("已连接 ModPC；点击开始后持续监测到手动停止。")
     }
 
-    function _diffKindText(kind) {
-        if (kind === "improved") return qsTr("变快")
-        if (kind === "regressed") return qsTr("变慢")
-        if (kind === "added") return qsTr("新增")
-        return qsTr("消失")
-    }
-
     function _diffKindStatus(kind) {
         if (kind === "improved") return Enums.statusLevel.success
         if (kind === "regressed") return Enums.statusLevel.warning
@@ -133,6 +111,13 @@ Card {
         if (kind === "added") return qsTr("新增")
         if (kind === "removed") return qsTr("消失")
         return qsTr("热点")
+    }
+
+    onReportHighlightsChanged: _syncHighlights()
+    Component.onCompleted: _syncHighlights()
+
+    ListModel {
+        id: reportHighlightsModel
     }
 
     Column {
@@ -228,71 +213,46 @@ Card {
                 wrapMode: Text.WordWrap
             }
 
-            Flow {
-                width: parent ? parent.width : 0
-                height: childrenRect.height
+            Row {
                 spacing: Enums.spacing.s
                 Tag {
                     visible: Boolean(root.detectedProcess.text)
                     text: qsTr("进程：%1").arg(root.detectedProcess.text || "")
                     status: Enums.statusLevel.info
                 }
-                Repeater {
-                    model: root.reportMetrics
-                    delegate: Tag {
-                        required property var modelData
-                        text: modelData.label + qsTr("：") + modelData.value
-                        status: Enums.statusLevel.info
-                    }
-                }
             }
 
             Column {
                 width: parent ? parent.width : 0
                 spacing: Enums.spacing.xs
-                visible: root.reportHighlights.length > 0
+                visible: reportHighlightsModel.count > 0
                 Label { text: qsTr("优先关注"); font.bold: true }
                 Repeater {
-                    model: root.reportHighlights
+                    model: reportHighlightsModel
                     delegate: RowLayout {
-                        required property var modelData
+                        required property string kind
+                        required property string name
+                        required property string detail
                         width: parent ? parent.width : 0
                         spacing: Enums.spacing.s
                         Tag {
-                            text: root._reportKindText(modelData.kind)
-                            status: root._diffKindStatus(modelData.kind)
+                            text: root._reportKindText(kind)
+                            status: root._diffKindStatus(kind)
                         }
                         Label {
                             Layout.fillWidth: true
-                            text: modelData.name
+                            text: name
                             wrapMode: Text.NoWrap
                             elide: Text.ElideMiddle
                         }
                         Label {
                             Layout.preferredWidth: 330
-                            text: modelData.detail
+                            text: detail
                             color: Enums.textColor.secondary
                             horizontalAlignment: Text.AlignRight
                             wrapMode: Text.NoWrap
                             elide: Text.ElideLeft
                         }
-                    }
-                }
-            }
-
-            Column {
-                width: parent ? parent.width : 0
-                spacing: Enums.spacing.xxs
-                visible: root.reportRecommendations.length > 0
-                Label { text: qsTr("下一步建议"); font.bold: true }
-                Repeater {
-                    model: root.reportRecommendations
-                    delegate: Label {
-                        required property var modelData
-                        width: parent ? parent.width : 0
-                        text: qsTr("• %1").arg(modelData)
-                        color: Enums.textColor.secondary
-                        wrapMode: Text.WordWrap
                     }
                 }
             }
@@ -304,100 +264,16 @@ Card {
             visible: root.captures.length > 0
 
             Label {
-                objectName: "tracyHotspotScopeTitle"
                 Layout.fillWidth: true
-                text: root.diff.summary !== undefined
-                      ? qsTr("前后变化")
-                      : qsTr("当前选中窗口最耗时函数（%1 秒）")
-                          .arg(Number(root.selectedSummary.seconds || 0))
-                font.bold: true
+                text: qsTr("完整函数列表、实时曲线和公开标准已收纳到性能详情。")
+                color: Enums.textColor.secondary
+                font.pixelSize: Enums.typography.caption
+                wrapMode: Text.WordWrap
             }
-            Tag {
-                text: qsTr("%1 个函数").arg(root.selectedSummary.matchedFunctions || 0)
-                status: Enums.statusLevel.info
-            }
-            Tag {
-                objectName: "tracySelectedFrameRateTag"
-                visible: Number(root.selectedSummary.averageFps || 0) > 0
-                text: qsTr("%1 FrameMark/s").arg(root._number(root.selectedSummary.averageFps, 1))
-                status: Enums.statusLevel.info
-            }
-        }
-
-        Column {
-            width: parent ? parent.width : 0
-            spacing: Enums.spacing.xs
-            visible: root.hotspots.length > 0 && root.diff.summary === undefined
-
-            RowLayout {
-                width: parent ? parent.width : 0
-                Label { Layout.fillWidth: true; text: qsTr("函数 / 源文件"); font.bold: true }
-                Label { Layout.preferredWidth: 100; text: qsTr("自身耗时"); font.bold: true }
-                Label { Layout.preferredWidth: 100; text: qsTr("总耗时"); font.bold: true }
-                Label { Layout.preferredWidth: 72; text: qsTr("调用"); font.bold: true }
-            }
-            Repeater {
-                model: root.hotspots
-                delegate: RowLayout {
-                    required property var modelData
-                    width: parent ? parent.width : 0
-                    Label {
-                        Layout.fillWidth: true
-                        text: modelData.name
-                        wrapMode: Text.NoWrap
-                        elide: Text.ElideMiddle
-                    }
-                    Label {
-                        Layout.preferredWidth: 100
-                        text: qsTr("%1 ms").arg(root._number(modelData.selfMs, 3))
-                    }
-                    Label {
-                        Layout.preferredWidth: 100
-                        text: qsTr("%1 ms").arg(root._number(modelData.totalMs, 3))
-                    }
-                    Label { Layout.preferredWidth: 72; text: String(modelData.calls || 0) }
-                }
-            }
-        }
-
-        Column {
-            width: parent ? parent.width : 0
-            spacing: Enums.spacing.xs
-            visible: root.diff.summary !== undefined
-
-            Label {
-                width: parent ? parent.width : 0
-                text: qsTr("总耗时 %1 → %2 ms（变化 %3 ms）")
-                      .arg(root._number(root.diff.summary ? root.diff.summary.baseSelfMs : 0, 3))
-                      .arg(root._number(root.diff.summary ? root.diff.summary.newSelfMs : 0, 3))
-                      .arg(root._number(root.diff.summary ? root.diff.summary.deltaMs : 0, 3))
-                color: root.diff.summary && Number(root.diff.summary.deltaMs) <= 0
-                       ? Enums.statusLevel.successColor : Enums.statusLevel.warningColor
-                font.bold: true
-            }
-            Repeater {
-                model: root.diffRows
-                delegate: RowLayout {
-                    required property var modelData
-                    width: parent ? parent.width : 0
-                    Tag {
-                        text: root._diffKindText(modelData.kind)
-                        status: root._diffKindStatus(modelData.kind)
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        text: modelData.name
-                        wrapMode: Text.NoWrap
-                        elide: Text.ElideMiddle
-                    }
-                    Label {
-                        Layout.preferredWidth: 210
-                        text: qsTr("%1 → %2 ms　变化 %3 ms")
-                              .arg(root._number(modelData.baseMs, 3))
-                              .arg(root._number(modelData.newMs, 3))
-                              .arg(root._number(modelData.deltaMs, 3))
-                    }
-                }
+            Button {
+                objectName: "tracyOpenDetailsButton"
+                text: qsTr("查看性能详情")
+                onClicked: root.detailsRequested()
             }
         }
 

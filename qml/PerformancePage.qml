@@ -2,6 +2,7 @@
 // 一键持续 Tracy 与 AirPerf 协议兼容性能监测页面。
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Window
 import PrismQML
 
 Item {
@@ -25,8 +26,39 @@ Item {
         if (backend) backend.refresh()
     }
 
+    function _prepareDetailsDrawer() {
+        var host = root.Window.window
+        detailsDrawer.mode = Enums.drawer.mode_inside
+        detailsDrawer.position = Enums.position.right
+        if (!host || typeof WindowHelper === "undefined" || !WindowHelper) return
+
+        var area = WindowHelper.availableScreenGeometryAt(
+            Math.round(host.x + host.width / 2),
+            Math.round(host.y + host.height / 2))
+        if (!area || Number(area.width || 0) <= 0) return
+        var requiredWidth = detailsDrawer.drawerWidth
+        var rightSpace = Number(area.x || 0) + Number(area.width || 0)
+                         - (host.x + host.width)
+        var leftSpace = host.x - Number(area.x || 0)
+        if (rightSpace >= requiredWidth) {
+            detailsDrawer.mode = Enums.drawer.mode_outside
+            detailsDrawer.position = Enums.position.right
+        } else if (leftSpace >= requiredWidth) {
+            detailsDrawer.mode = Enums.drawer.mode_outside
+            detailsDrawer.position = Enums.position.left
+        }
+    }
+
+    function _openDetailsDrawer() {
+        _prepareDetailsDrawer()
+        detailsDrawer.open()
+    }
+
     Component.onCompleted: _refresh()
     onBackendChanged: _refresh()
+    onVisibleChanged: {
+        if (!visible && detailsDrawer.opened) detailsDrawer.close()
+    }
 
     Connections {
         target: root.backend
@@ -51,32 +83,46 @@ Item {
     }
 
     ScrollArea {
+        id: mainScrollArea
+        objectName: "performanceMainScrollArea"
         anchors.fill: parent
         padding: Enums.spacing.xxxl
+        orientation: Qt.Vertical
 
         Column {
             width: parent ? parent.width : 0
             spacing: Enums.spacing.xxl
 
-            Column {
+            RowLayout {
                 width: parent ? parent.width : 0
-                spacing: Enums.spacing.xs
+                spacing: Enums.spacing.l
 
-                Label {
-                    width: parent ? parent.width : 0
-                    text: qsTr("性能诊断")
-                    color: Enums.textColor.primary
-                    font.family: Enums.fontFamily
-                    font.pixelSize: Enums.typography.displayLarge
-                    font.bold: true
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: Enums.spacing.xs
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("性能诊断")
+                        color: Enums.textColor.primary
+                        font.family: Enums.fontFamily
+                        font.pixelSize: Enums.typography.displayLarge
+                        font.bold: true
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("进入 MC 自动开始，退出 MC 自动停止；也可手动控制并生成整段会话报告。")
+                        color: Enums.textColor.secondary
+                        font.family: Enums.fontFamily
+                        font.pixelSize: Enums.typography.caption
+                        wrapMode: Text.WordWrap
+                    }
                 }
-                Label {
-                    width: parent ? parent.width : 0
-                    text: qsTr("进入 MC 自动开始，退出 MC 自动停止；也可手动控制并生成整段会话报告。")
-                    color: Enums.textColor.secondary
-                    font.family: Enums.fontFamily
-                    font.pixelSize: Enums.typography.caption
-                    wrapMode: Text.WordWrap
+                Button {
+                    objectName: "performanceDetailsButton"
+                    text: qsTr("性能详情")
+                    style: Enums.button.style_filled
+                    level: Enums.statusLevel.info
+                    onClicked: root._openDetailsDrawer()
                 }
             }
 
@@ -87,6 +133,7 @@ Item {
                 performanceState: root._state
                 processes: root._processes
                 selectedPid: Number(root._state.selectedPid || 0)
+                onDetailsRequested: root._openDetailsDrawer()
             }
 
             Card {
@@ -186,47 +233,9 @@ Item {
                         }
                     }
 
-                    GridLayout {
-                        objectName: "performanceChartsLayout"
-                        width: parent ? parent.width : 0
-                        columns: width >= 1280 ? 2 : 1
-                        spacing: Enums.spacing.m
-
-                        ChartView {
-                            objectName: "performanceCpuChart"
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 240
-                            chartType: Enums.chart.type_line
-                            chartData: root._state.cpuHistory || []
-                            title: qsTr("CPU 使用率")
-                            yAxisSuffix: "%"
-                            showLegend: false
-                            showValues: false
-                            showAverage: true
-                            showMinMax: true
-                            animated: false
-                            emptyText: qsTr("开始监测后显示曲线")
-                        }
-                        ChartView {
-                            objectName: "performanceMemoryChart"
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 240
-                            chartType: Enums.chart.type_line
-                            chartData: root._state.memoryHistory || []
-                            title: qsTr("进程工作集")
-                            yAxisSuffix: " MB"
-                            showLegend: false
-                            showValues: false
-                            showAverage: true
-                            showMinMax: true
-                            animated: false
-                            emptyText: qsTr("开始监测后显示曲线")
-                        }
-                    }
-
                     Label {
                         width: parent ? parent.width : 0
-                        text: qsTr("由上方持续监测统一控制；这里显示 Win PC 进程 CPU 与工作集，不能直接替代网易手机集群机审结论。")
+                        text: qsTr("由上方持续监测统一控制；完整曲线已移至性能详情，这里保留当前值用于快速判断。")
                         color: Enums.statusLevel.warningColor
                         font.family: Enums.fontFamily
                         font.pixelSize: Enums.typography.caption
@@ -234,48 +243,32 @@ Item {
                     }
                 }
             }
+        }
+    }
 
-            Card {
-                objectName: "performanceThresholdCard"
-                width: parent ? parent.width : 0
-                autoHeight: true
+    Drawer {
+        id: detailsDrawer
+        objectName: "performanceDetailsDrawer"
+        anchors.fill: parent
+        mode: Enums.drawer.mode_inside
+        position: Enums.position.right
+        drawerWidth: {
+            var hostWidth = root.Window.window ? root.Window.window.width : root.width
+            var preferred = Math.max(480, hostWidth * 0.44)
+            var insideLimit = Math.max(320, hostWidth - Enums.spacing.xxl)
+            return Math.round(Math.min(720, preferred, insideLimit))
+        }
+        drawerHeight: root.Window.window ? root.Window.window.height : root.height
+        modal: mode === Enums.drawer.mode_inside
+        animationDuration: Enums.duration.normal
 
-                Column {
-                    width: parent ? parent.width : 0
-                    spacing: Enums.spacing.m
-
-                    Label {
-                        text: qsTr("网易公开性能标准")
-                        color: Enums.textColor.primary
-                        font.family: Enums.fontFamily
-                        font.pixelSize: Enums.typography.subtitle
-                        font.bold: true
-                    }
-                    Repeater {
-                        model: [
-                            { "name": qsTr("加载时长"), "excellent": "< 10s", "recommended": "< 60s", "pass": "< 120s" },
-                            { "name": qsTr("内存峰值"), "excellent": "< 150MB", "recommended": "< 300MB", "pass": "< 450MB" },
-                            { "name": qsTr("平均帧率"), "excellent": "> 55", "recommended": "> 50", "pass": "> 40" }
-                        ]
-                        delegate: RowLayout {
-                            required property var modelData
-                            width: parent ? parent.width : 0
-                            spacing: Enums.spacing.m
-                            Label { Layout.fillWidth: true; text: modelData.name; font.bold: true }
-                            Label { Layout.preferredWidth: 130; text: qsTr("优秀：") + modelData.excellent }
-                            Label { Layout.preferredWidth: 160; text: qsTr("建议：") + modelData.recommended }
-                            Label { Layout.preferredWidth: 130; text: qsTr("达标：") + modelData.pass }
-                        }
-                    }
-                    Label {
-                        width: parent ? parent.width : 0
-                        text: qsTr("官方未公开采样窗口、场景脚本、FPS 数据源和卡顿阈值，因此这些数值仅作开发阶段参照。")
-                        color: Enums.textColor.tertiary
-                        font.pixelSize: Enums.typography.caption
-                        wrapMode: Text.WordWrap
-                    }
-                }
-            }
+        PerformanceDetailsPanel {
+            anchors.fill: parent
+            state: root._tracy
+            performanceState: root._state
+            processes: root._processes
+            selectedPid: Number(root._state.selectedPid || 0)
+            onCloseRequested: detailsDrawer.close()
         }
     }
 }
