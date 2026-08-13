@@ -44,7 +44,34 @@ def build_airperf_report_metrics(
             metrics.append(
                 {"label": f"AirPerf {label}", "value": template.format(payload[field])}
             )
+    stutter_count = _summary_number(summary, "frameStutterCount", "sum")
+    stutter_duration_ms = _summary_number(
+        summary, "frameStutterDurationSumMs", "sum"
+    )
+    if stutter_count:
+        metrics.extend(
+            [
+                {
+                    "label": "AirPerf 本地卡顿次数（含严重）",
+                    "value": f"{stutter_count:.0f}",
+                },
+                {
+                    "label": "AirPerf 本地平均卡顿时长",
+                    "value": f"{stutter_duration_ms / stutter_count / 1000.0:.3f} 秒",
+                },
+            ]
+        )
     return metrics
+
+
+def _summary_number(
+    summary: Mapping[str, Mapping[str, object]], key: str, field: str
+) -> float:
+    payload = summary.get(key)
+    if not isinstance(payload, Mapping):
+        return 0.0
+    value = payload.get(field)
+    return float(value) if isinstance(value, (int, float)) else 0.0
 
 
 __all__ = ["REPORT_METRIC_DEFINITIONS", "build_airperf_report_metrics"]

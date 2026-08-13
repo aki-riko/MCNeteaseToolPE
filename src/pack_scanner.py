@@ -26,6 +26,7 @@ from .legacy_pylint_runner import (
 )
 from .module_whitelist import collect_local_modules, find_disallowed_imports, load_module_whitelist
 from .netease_content_audit import run_content_checks
+from .performance_risk_audit import analyze_python_source
 
 
 LOGGER = logging.getLogger(__name__)
@@ -490,6 +491,23 @@ def _check_behavior_pack(root: str, pack: str, output: list[AuditIssue]) -> None
     files = [path for path in _iter_named(pack, suffix=".py") if "__pycache__" not in path]
     _append_manual_behavior_issues(root, pack, files, output)
     _append_historical_compatibility_issues(files, root, output)
+    for path in files:
+        try:
+            with open(path, "r", encoding="utf-8-sig") as handle:
+                source = handle.read()
+        except (OSError, UnicodeDecodeError) as error:
+            LOGGER.warning("性能风险分析无法读取 %s: %s", path, error)
+            continue
+        for risk in analyze_python_source(source, path):
+            output.append(
+                _issue(
+                    41,
+                    risk.severity,
+                    risk.title,
+                    risk.detail,
+                    _relative(root, path),
+                )
+            )
 
 
 def _check_structures_depth(root: str, output: list[AuditIssue]) -> None:

@@ -32,6 +32,7 @@ def code_name(code: int) -> str:
         37: "ManifestJsonError min_engine_version 缺失/过低",
         38: "MakeBehaviourPackJsonError manifest 含注释/非 UTF-8",
         40: "InvalidJsonDataError json 非 UTF-8",
+        41: "PerformanceRiskWarning 性能风险警告（非拒审判据）",
     }
     return names.get(code, "静态检查")
 

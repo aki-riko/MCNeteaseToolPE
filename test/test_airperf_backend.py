@@ -199,6 +199,8 @@ def test_graphics_accumulator_matches_official_second_bucket_formula() -> None:
     assert sample["frameJankCount"] == 0.0
     assert sample["frameBigJankCount"] == 1.0
     assert sample["frameTimeMaxMs"] == 150.0
+    assert sample["frameStutterCount"] == 1.0
+    assert sample["frameStutterDurationSumMs"] == 150.0
 
 
 def test_graphics_accumulator_preserves_every_completed_second_bucket() -> None:
@@ -408,6 +410,20 @@ def test_report_metrics_skip_unavailable_indicators() -> None:
         {"label": "AirPerf 整机 GPU 温度峰值", "value": "61.5 °C"},
         {"label": "AirPerf 磁盘累计忙碌峰值", "value": "109.4%"},
     ]
+
+
+def test_report_metrics_match_netease_jank_count_and_average_duration_shape() -> None:
+    metrics = build_airperf_report_metrics(
+        {
+            "frameStutterCount": {"sum": 3.0},
+            "frameStutterDurationSumMs": {"sum": 1803.0},
+        },
+        5,
+    )
+
+    values = {item["label"]: item["value"] for item in metrics}
+    assert values["AirPerf 本地卡顿次数（含严重）"] == "3"
+    assert values["AirPerf 本地平均卡顿时长"] == "0.601 秒"
 
 
 def test_monitor_reports_unavailable_backend_in_unified_metrics() -> None:

@@ -36,6 +36,11 @@ class AirPerfGraphicsAccumulator:
         frame_infos = bucket["FrameInfos"]
         assert isinstance(frame_infos, list)
         frame_times = [float(item["frameTime"]) for item in frame_infos]
+        jank_times = [
+            float(item["frameTime"])
+            for item in frame_infos
+            if item.get("isJank") or item.get("isBigJank")
+        ]
         return {
             "frameAverageFps": float(bucket["FPS"]),
             "frameDrawCalls": float(bucket["DrawCalls"]),
@@ -43,6 +48,8 @@ class AirPerfGraphicsAccumulator:
             "frameJankCount": float(bucket["JankCount"]),
             "frameBigJankCount": float(bucket["BigJankCount"]),
             "frameTimeMaxMs": max(frame_times, default=0.0) / 1_000_000.0,
+            "frameStutterCount": float(len(jank_times)),
+            "frameStutterDurationSumMs": sum(jank_times) / 1_000_000.0,
         }
 
     @staticmethod
@@ -115,6 +122,8 @@ class AirPerfGraphicsAccumulator:
             "frameTime": frame["frameTime"],
             "drawCall": frame["drawCall"],
             "trangle": frame["trangle"],
+            "isJank": frame["isJank"],
+            "isBigJank": frame["isBigJank"],
         }
 
     def _complete_buckets(self) -> list[dict[str, object]]:
