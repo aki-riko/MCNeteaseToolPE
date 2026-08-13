@@ -70,6 +70,17 @@ def test_installer_shortcuts_match_prismqml_app_identity() -> None:
     assert installer.count('AppUserModelID: "{#MyAppUserModelID}"') == 2
 
 
+def test_nuitka_build_includes_dynamic_python2_parser_package() -> None:
+    build_script = _read("build_nuitka.ps1")
+
+    assert '"--include-package=lib2to3"' in build_script
+    assert '"--include-data-file=$lib2to3Grammar=lib2to3/Grammar.txt"' in build_script
+    assert (
+        '"--include-data-file=$lib2to3PatternGrammar=lib2to3/PatternGrammar.txt"'
+        in build_script
+    )
+
+
 def test_legacy_cpp_implementation_is_removed() -> None:
     for relative_path in LEGACY_CPP_PATHS:
         assert not (PROJECT_ROOT / relative_path).exists(), relative_path

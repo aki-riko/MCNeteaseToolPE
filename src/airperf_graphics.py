@@ -17,6 +17,7 @@ class AirPerfGraphicsAccumulator:
     def __init__(self) -> None:
         self._frames: list[dict[str, float | bool]] = []
         self._buckets: dict[int, dict[str, object]] = {}
+        self._last_timestamp: float | None = None
 
     def feed(self, raw_frames: list[dict[str, object]]) -> dict[str, float]:
         samples = self.feed_all(raw_frames)
@@ -25,11 +26,29 @@ class AirPerfGraphicsAccumulator:
     def feed_all(self, raw_frames: list[dict[str, object]]) -> list[dict[str, float]]:
         """逐项返回官方适配器产生的全部已完成秒桶。"""
 
-        for raw_frame in raw_frames:
+        for raw_frame in self._new_frames(raw_frames):
             self._append_frame(raw_frame)
         completed = self._complete_buckets()
         self._frames = self._frames[-5:]
         return [self._bucket_sample(bucket) for bucket in completed]
+
+    def _new_frames(
+        self,
+        raw_frames: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Accept both delta batches and cumulative overlapping frame lists."""
+
+        fresh: list[dict[str, object]] = []
+        for raw_frame in sorted(
+            raw_frames,
+            key=lambda item: self._number(item, "timestamp"),
+        ):
+            timestamp = self._number(raw_frame, "timestamp")
+            if self._last_timestamp is not None and timestamp <= self._last_timestamp:
+                continue
+            fresh.append(raw_frame)
+            self._last_timestamp = timestamp
+        return fresh
 
     @staticmethod
     def _bucket_sample(bucket: Mapping[str, object]) -> dict[str, float]:

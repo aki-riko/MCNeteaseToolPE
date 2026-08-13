@@ -75,6 +75,13 @@ if ($LASTEXITCODE -ne 0) {
 }
 $enginePackage = Resolve-RequiredPath -Path $enginePackage -Label "PrismQML Python 包"
 $engineQml = Resolve-RequiredPath -Path (Join-Path $enginePackage "PrismQML") -Label "PrismQML QML 模块"
+$pythonStdlib = (& $python -c "import sysconfig; print(sysconfig.get_path('stdlib'))").Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "无法从项目虚拟环境解析 Python 标准库"
+}
+$lib2to3Dir = Resolve-RequiredPath -Path (Join-Path $pythonStdlib "lib2to3") -Label "lib2to3 标准库包"
+$lib2to3Grammar = Resolve-RequiredPath -Path (Join-Path $lib2to3Dir "Grammar.txt") -Label "lib2to3 Grammar.txt"
+$lib2to3PatternGrammar = Resolve-RequiredPath -Path (Join-Path $lib2to3Dir "PatternGrammar.txt") -Label "lib2to3 PatternGrammar.txt"
 $entryPoint = Resolve-RequiredPath -Path (Join-Path $projectRoot "main.py") -Label "应用入口"
 $appIconPng = Resolve-RequiredPath -Path (Join-Path $projectRoot "assets\app_icon.png") -Label "应用 PNG 图标"
 $moduleWhitelist = Resolve-RequiredPath -Path (Join-Path $projectRoot "src\netease_python_module_whitelist.txt") -Label "网易 Python 模块白名单"
@@ -156,6 +163,9 @@ $arguments = @(
     "--include-qt-plugins=qml",
     "--include-package=prismqml",
     "--include-package=multiprocessing",
+    "--include-package=lib2to3",
+    "--include-data-file=$lib2to3Grammar=lib2to3/Grammar.txt",
+    "--include-data-file=$lib2to3PatternGrammar=lib2to3/PatternGrammar.txt",
     "--include-data-file=$appIconPng=assets/app_icon.png",
     "--include-data-file=$moduleWhitelist=src/netease_python_module_whitelist.txt",
     "--include-data-file=$legacyWorker=src/legacy_pylint_worker.py",

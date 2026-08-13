@@ -712,6 +712,17 @@ def test_audit_backend_rejects_error_issues() -> None:
     assert results == [(False, 1, 1, issues)]
 
 
+def test_audit_backend_only_performance_warning_still_passes() -> None:
+    backend = AuditBackend()
+    results: list[tuple[object, ...]] = []
+    backend.finished.connect(lambda *args: results.append(args))
+
+    issues = [{"code": 41, "severity": "warning"}]
+    backend._complete(issues)
+
+    assert results == [(True, 0, 1, issues)]
+
+
 def test_manifest_and_filename_rules(tmp_path: Path) -> None:
     pack = tmp_path / "behavior_pack"
     pack.mkdir()

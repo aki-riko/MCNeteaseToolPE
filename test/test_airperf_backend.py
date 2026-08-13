@@ -220,6 +220,53 @@ def test_graphics_accumulator_preserves_every_completed_second_bucket() -> None:
     assert [sample["frameDrawCalls"] for sample in samples] == [10.0, 10.0]
 
 
+def test_graphics_accumulator_ignores_overlapping_cumulative_frame_batches() -> None:
+    accumulator = AirPerfGraphicsAccumulator()
+    first = [
+        {"timestamp": 1_800_000_000, "drawCallCount": 10, "trangleCount": 100},
+        {"timestamp": 1_900_000_000, "drawCallCount": 20, "trangleCount": 200},
+        {"timestamp": 2_000_000_000, "drawCallCount": 30, "trangleCount": 300},
+    ]
+    second = first + [
+        {"timestamp": 2_100_000_000, "drawCallCount": 40, "trangleCount": 400},
+        {"timestamp": 3_000_000_000, "drawCallCount": 50, "trangleCount": 500},
+    ]
+
+    assert len(accumulator.feed_all(first)) == 1
+    samples = accumulator.feed_all(second)
+
+    assert len(samples) == 1
+    assert samples[0]["frameAverageFps"] == 10.0
+
+
+def test_graphics_accumulator_does_not_duplicate_stutter_from_overlap() -> None:
+    accumulator = AirPerfGraphicsAccumulator()
+    first = [
+        {"timestamp": 1_000_000_000, "drawCallCount": 10, "trangleCount": 100},
+        {"timestamp": 1_016_000_000, "drawCallCount": 20, "trangleCount": 200},
+        {"timestamp": 1_032_000_000, "drawCallCount": 30, "trangleCount": 300},
+        {"timestamp": 1_048_000_000, "drawCallCount": 40, "trangleCount": 400},
+        {"timestamp": 1_198_000_000, "drawCallCount": 50, "trangleCount": 500},
+        {"timestamp": 2_000_000_000, "drawCallCount": 60, "trangleCount": 600},
+    ]
+    first_samples = accumulator.feed_all(first)
+    second_samples = accumulator.feed_all(
+        list(reversed(first))
+        + [
+            {"timestamp": 2_016_000_000, "drawCallCount": 70, "trangleCount": 700},
+            {"timestamp": 2_032_000_000, "drawCallCount": 80, "trangleCount": 800},
+            {"timestamp": 2_048_000_000, "drawCallCount": 90, "trangleCount": 900},
+            {"timestamp": 3_000_000_000, "drawCallCount": 100, "trangleCount": 1000},
+        ]
+    )
+
+    assert first_samples[0]["frameStutterCount"] == 1.0
+    assert first_samples[0]["frameStutterDurationSumMs"] == 150.0
+    assert len(second_samples) == 1
+    assert second_samples[0]["frameStutterCount"] == 1.0
+    assert second_samples[0]["frameStutterDurationSumMs"] == 802.0
+
+
 def _build_carchive(path: Path, files: dict[str, bytes]) -> None:
     data_parts: list[bytes] = []
     toc_parts: list[bytes] = []

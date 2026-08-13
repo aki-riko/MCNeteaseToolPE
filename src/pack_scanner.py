@@ -13,7 +13,7 @@ import logging
 import os
 from pathlib import Path
 import re
-from typing import Callable, Iterable, Iterator
+from typing import Callable, Iterable, Iterator, Mapping
 
 from .audit_codes import code_name
 from .code_review_compat import find_legacy_property_accesses
@@ -26,7 +26,7 @@ from .legacy_pylint_runner import (
 )
 from .module_whitelist import collect_local_modules, find_disallowed_imports, load_module_whitelist
 from .netease_content_audit import run_content_checks
-from .performance_risk_audit import analyze_python_source
+from .performance_risk_audit import analyze_python_source_result
 
 
 LOGGER = logging.getLogger(__name__)
@@ -229,6 +229,7 @@ def _append_manual_behavior_issues(
     pack: str,
     files: Iterable[str],
     output: list[AuditIssue],
+    sources: Mapping[str, str] | None = None,
 ) -> None:
     try:
         whitelist = load_module_whitelist()
@@ -237,32 +238,46 @@ def _append_manual_behavior_issues(
         output.append(_issue(18, "error", "网易模块白名单不可用", str(error), _relative(root, pack)))
         return
     file_list = list(files)
+    source_map = sources if sources is not None else {}
     local_modules = collect_local_modules(pack, file_list)
     for path in file_list:
         rel = _relative(root, path)
-        try:
-            with open(path, "r", encoding="utf-8-sig") as handle:
-                source = handle.read()
-                for reference in find_disallowed_imports(source, whitelist, local_modules):
-                    detail = f"import {reference.module}（第 {reference.line} 行）"
-                    output.append(_issue(18, "error", "使用网易白名单外模块", detail, rel))
-        except (OSError, UnicodeDecodeError) as error:
-            LOGGER.warning("行为包脚本无法读取 %s: %s", path, error)
+        source = source_map.get(path)
+        if source is None:
+            if sources is not None:
+                continue
+            try:
+                with open(path, "r", encoding="utf-8-sig") as handle:
+                    source = handle.read()
+            except (OSError, UnicodeDecodeError) as error:
+                LOGGER.warning("行为包脚本无法读取 %s: %s", path, error)
+                continue
+        for reference in find_disallowed_imports(source, whitelist, local_modules):
+            detail = f"import {reference.module}（第 {reference.line} 行）"
+            output.append(_issue(18, "error", "使用网易白名单外模块", detail, rel))
 
 
 def _append_historical_compatibility_issues(
-    pack_files: list[str], root: str, output: list[AuditIssue]
+    pack_files: list[str],
+    root: str,
+    output: list[AuditIssue],
+    sources: Mapping[str, str] | None = None,
 ) -> None:
     """Add historically proven errors that modern pylint no longer emits."""
 
+    source_map = sources if sources is not None else {}
     for path in pack_files:
         rel = _relative(root, path)
-        try:
-            with open(path, "r", encoding="utf-8-sig") as handle:
-                source = handle.read()
-        except (OSError, UnicodeDecodeError) as error:
-            LOGGER.warning("历史审核规则无法读取 %s: %s", path, error)
-            continue
+        source = source_map.get(path)
+        if source is None:
+            if sources is not None:
+                continue
+            try:
+                with open(path, "r", encoding="utf-8-sig") as handle:
+                    source = handle.read()
+            except (OSError, UnicodeDecodeError) as error:
+                LOGGER.warning("历史审核规则无法读取 %s: %s", path, error)
+                continue
         for finding in find_legacy_property_accesses(source):
             line_marker = f"第 {finding.line} 行"
             duplicate = any(
@@ -489,22 +504,34 @@ def _check_json_encoding(
 
 def _check_behavior_pack(root: str, pack: str, output: list[AuditIssue]) -> None:
     files = [path for path in _iter_named(pack, suffix=".py") if "__pycache__" not in path]
-    _append_manual_behavior_issues(root, pack, files, output)
-    _append_historical_compatibility_issues(files, root, output)
+    sources: dict[str, str] = {}
     for path in files:
         try:
             with open(path, "r", encoding="utf-8-sig") as handle:
-                source = handle.read()
+                sources[path] = handle.read()
         except (OSError, UnicodeDecodeError) as error:
-            LOGGER.warning("性能风险分析无法读取 %s: %s", path, error)
-            continue
-        for risk in analyze_python_source(source, path):
+            LOGGER.warning("行为包脚本无法读取 %s: %s", path, error)
+    _append_manual_behavior_issues(root, pack, files, output, sources)
+    _append_historical_compatibility_issues(files, root, output, sources)
+    for path, source in sources.items():
+        analysis = analyze_python_source_result(source, path)
+        for risk in analysis.risks:
             output.append(
                 _issue(
                     41,
                     risk.severity,
                     risk.title,
                     risk.detail,
+                    _relative(root, path),
+                )
+            )
+        if analysis.diagnostic:
+            output.append(
+                _issue(
+                    41,
+                    "warning",
+                    "Python 性能风险分析未完成",
+                    analysis.diagnostic,
                     _relative(root, path),
                 )
             )
