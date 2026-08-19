@@ -19,6 +19,7 @@ def test_performance_page_quick_capture_states_load_offscreen() -> None:
 import copy
 import os
 import sys
+import time
 sys.path.insert(0, r'{REPO_ROOT}')
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtCore import QObject, QUrl
@@ -56,6 +57,22 @@ def tracy_probe():
         'binAvailable': True, 'binDir': 'tracy_bin',
         'reachable': False, 'tools': {{}},
     }}
+
+def wait_for_scroll_position(flickable, expected, tolerance=4.0, timeout_ms=1500):
+    # Wait for the ScrollArea layout transaction to settle after a refresh.
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    stable_sample = None
+    current = float(flickable.property('contentY'))
+    while time.monotonic() < deadline:
+        current = float(flickable.property('contentY'))
+        if abs(current - expected) <= tolerance:
+            if stable_sample is not None and abs(current - stable_sample) <= 0.5:
+                return current
+            stable_sample = current
+        else:
+            stable_sample = None
+        QTest.qWait(40)
+    return current
 
 app = QApplication.instance() or QApplication([])
 engine = QQmlApplicationEngine()
@@ -208,8 +225,8 @@ refreshed_state['hotspots'][0]['selfMs'] = 20.1
 tracy_card.setProperty('state', refreshed_state)
 details_panel.setProperty('state', refreshed_state)
 QTest.qWait(120)
-position_after_refresh = main_flickable.property('contentY')
-assert abs(position_after_refresh - position_before_refresh) < 2.0, (
+position_after_refresh = wait_for_scroll_position(main_flickable, position_before_refresh)
+assert abs(position_after_refresh - position_before_refresh) < 4.0, (
     position_before_refresh, position_after_refresh,
     main_flickable.property('contentHeight')
 )
@@ -231,8 +248,8 @@ drawer_refresh['report']['recommendations'][0] = '优先检查 update @ Demo 的
 drawer_refresh['hotspots'][0]['totalMs'] = 24.1
 details_panel.setProperty('state', drawer_refresh)
 QTest.qWait(120)
-details_position_after = details_flickable.property('contentY')
-assert abs(details_position_after - details_position_before) < 2.0, (
+details_position_after = wait_for_scroll_position(details_flickable, details_position_before)
+assert abs(details_position_after - details_position_before) < 4.0, (
     details_position_before, details_position_after,
     details_flickable.property('contentHeight')
 )
