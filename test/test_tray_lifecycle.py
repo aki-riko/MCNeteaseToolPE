@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from prismqml import ActivationReason
+from prismqml.python.window.tray_types import ActivationReason
 
 import main
 

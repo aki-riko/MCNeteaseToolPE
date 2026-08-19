@@ -14,19 +14,19 @@ import os
 import sys
 
 from prismqml import (
-    ActivationReason,
     App,
     SystemTrayIcon,
     Window,
     WindowCloseEvent,
     WindowType,
 )
-from prismqml.python.core import (
+from prismqml.python.runtime import (
     NotificationPosition,
     showDesktopError,
     showDesktopSuccess,
 )
 from prismqml.python.window.async_qml_page import AsyncQmlPage
+from prismqml.python.window.tray_types import ActivationReason
 
 from src.audit_cli import run_audit_cli
 from src.backends import ProjectBackend

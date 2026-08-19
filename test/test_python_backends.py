@@ -13,7 +13,7 @@ import sys
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEventLoop, QObject, QTimer, Signal
-from prismqml.python.core import NotificationPosition
+from prismqml.python.runtime import NotificationPosition
 
 import main as application_main
 from src.audit_cli import run_audit_cli
