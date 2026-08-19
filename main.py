@@ -45,7 +45,10 @@ from src.level_dat_backend import LevelDatBackend
 from src.mcp_server import MCP_SERVER_FLAG
 from src.mcp_server_backend import McpServerBackend
 from src.performance_backend import PerformanceBackend
-from src.settings_backend import ApplicationSettingsBackend
+from src.settings_backend import (
+    ApplicationSettingsBackend,
+    resolve_prismqml_config_path,
+)
 
 # 窗口尺寸；版本与更新配置集中在 src/config.py，可由环境变量覆盖。
 WINDOW_W = 1000
@@ -225,7 +228,11 @@ def main() -> int:
         return cli_status
 
     App.setApplicationName(APP_TITLE)
-    app = App(application_icon=_APP_ICON)
+    app = App(
+        application_icon=_APP_ICON,
+        config_path=resolve_prismqml_config_path(),
+        persist_appearance=True,
+    )
     app.enable_auto_update(UPDATE_REPO, APP_VERSION, UPDATE_ASSET_KEYWORD)
     # Python 引擎只自动注入 appUpdater；安装参数属于应用配置，由宿主显式提供。
     app.engine.rootContext().setContextProperty("appInstallerSilentArgs", INSTALLER_SILENT_ARGS)

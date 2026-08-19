@@ -4,13 +4,18 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import subprocess
+import sys
+import tempfile
 from importlib.metadata import version
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_PRISMQML_VERSION = "0.3.3.7"
+EXPECTED_PRISMQML_VERSION = "0.4.0.8"
 EXPECTED_MCP_TOOL_NAMES = {
     "process_project",
     "inspect_world_data",
@@ -32,6 +37,98 @@ def test_prismqml_release_is_pinned_and_installed() -> None:
     assert f"prismqml=={EXPECTED_PRISMQML_VERSION}" in requirements.splitlines()
     assert f"`prismqml=={EXPECTED_PRISMQML_VERSION}`" in readme
     assert version("prismqml") == EXPECTED_PRISMQML_VERSION
+
+
+def test_prismqml_config_is_owned_by_mcneteasetoolpe() -> None:
+    main_source = _read("main.py")
+    settings_source = _read("src/settings_backend.py")
+
+    assert "config_path=resolve_prismqml_config_path()" in main_source
+    assert "persist_appearance=True" in main_source
+    assert 'APP_CONFIG_DIR_NAME = "MCNeteaseToolPE"' in settings_source
+    assert 'PRISMQML_CONFIG_FILE_NAME = "prismqml.json"' in settings_source
+
+
+def test_application_config_wins_when_gallery_config_exists() -> None:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        temporary_root = Path(temporary_directory)
+        gallery_path = temporary_root / "gallery.json"
+        application_path = (
+            temporary_root / "roaming" / "MCNeteaseToolPE" / "prismqml.json"
+        )
+        application_path.parent.mkdir(parents=True)
+        gallery_path.write_text(
+            json.dumps(
+                {
+                    "Appearance": {
+                        "Theme": "dark",
+                        "Skin": "vintage_ticket",
+                        "Language": "zh_CN",
+                        "AccentColor": "#123456",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        application_path.write_text(
+            json.dumps(
+                {
+                    "Appearance": {
+                        "Theme": "light",
+                        "Skin": "fluent",
+                        "Language": "en",
+                        "AccentColor": "#654321",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "APPDATA": str(temporary_root / "roaming"),
+                "MCNETEASE_PRISMQML_CONFIG_FILE": str(application_path),
+                "PRISMQML_CONFIG_FILE": str(gallery_path),
+                "PYTHONIOENCODING": "utf-8",
+                "QT_QPA_PLATFORM": "offscreen",
+            }
+        )
+        script = """
+from pathlib import Path
+from PySide6.QtCore import QTimer
+from prismqml import App
+from prismqml.python.config import getConfigManager
+from src.settings_backend import resolve_prismqml_config_path
+
+config_path = resolve_prismqml_config_path()
+app = App(
+    [],
+    config_path=config_path,
+    persist_appearance=True,
+    auto_update_slot_redirect=False,
+)
+manager = getConfigManager(config_path, persist_appearance=True)
+assert Path(manager.getConfigPath()).resolve() == config_path.resolve()
+assert manager.theme == "light"
+assert manager.skin == "fluent"
+assert manager.language == "en"
+assert manager.accentColor == "#654321"
+QTimer.singleShot(0, app.quit)
+raise SystemExit(app.exec())
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_settings_uses_prismqml_default_update_toast() -> None:

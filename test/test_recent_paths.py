@@ -29,6 +29,20 @@ def test_default_settings_file_is_under_appdata_application_directory(
     )
 
 
+def test_prismqml_config_file_is_under_application_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app_data = tmp_path / "Roaming"
+    monkeypatch.setenv(settings_module.APP_DATA_ENV, str(app_data))
+    monkeypatch.delenv(settings_module.PRISMQML_CONFIG_FILE_ENV, raising=False)
+
+    assert settings_module.resolve_prismqml_config_path() == (
+        app_data
+        / settings_module.APP_CONFIG_DIR_NAME
+        / settings_module.PRISMQML_CONFIG_FILE_NAME
+    )
+
+
 def test_recent_project_and_nbt_paths_persist_and_reload(
     tmp_path: Path, monkeypatch
 ) -> None:

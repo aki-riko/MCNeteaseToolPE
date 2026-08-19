@@ -140,7 +140,7 @@ AirPerf 专业采集；稳定期可用 `MCNETEASE_PERFORMANCE_AUTO_STABILITY_MS`
 
 ## 🛠️ Python 开发运行
 
-Python 重写运行时使用 PyPI 发布的固定版本 `prismqml==0.3.3.7`，不再通过
+Python 重写运行时使用 PyPI 发布的固定版本 `prismqml==0.4.0.8`，不再通过
 `PYTHONPATH` 覆盖成本地引擎源码；MCP 使用固定版本 `mcp==1.28.1`。Windows
 PowerShell 示例：
 
@@ -259,7 +259,7 @@ standalone 可执行文件支持只读自动验收，不会修改被扫描工程
 `build_nuitka.ps1` 生成 standalone 目录，再把该 `main.dist` 目录交给 Inno Setup：
 
 ```bash
-iscc /DMyAppVersion=0.1.0.5 /DBuildDir="build\nuitka-release\main.dist" installer/MCNeteaseToolPE.iss
+iscc /DMyAppVersion=0.1.0.6 /DBuildDir="build\nuitka-release\main.dist" installer/MCNeteaseToolPE.iss
 ```
 
 输出文件名包含 `Setup` 关键词,供自动更新按 GitHub release 资源匹配。安装包支持

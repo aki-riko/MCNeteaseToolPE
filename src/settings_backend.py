@@ -25,26 +25,30 @@ from .legacy_pylint_runner import WORKER_COUNT_ENV
 LOGGER = logging.getLogger(__name__)
 
 SETTINGS_FILE_ENV = "MCNETEASE_SETTINGS_FILE"
+PRISMQML_CONFIG_FILE_ENV = "MCNETEASE_PRISMQML_CONFIG_FILE"
 APP_DATA_ENV = "APPDATA"
 XDG_CONFIG_HOME_ENV = "XDG_CONFIG_HOME"
 APP_CONFIG_DIR_NAME = "MCNeteaseToolPE"
 SETTINGS_FILE_NAME = "settings.json"
+PRISMQML_CONFIG_FILE_NAME = "prismqml.json"
 LOGICAL_PROCESSOR_COUNT = max(1, os.cpu_count() or 1)
 LEGACY_SETTINGS_FILE = DEFAULT_CONFIG_DIR / "mcneteasetoolpe.json"
 
 
-def _default_settings_file() -> Path:
+def _default_config_root() -> Path:
     app_data = os.environ.get(APP_DATA_ENV, "").strip()
     if app_data:
-        config_root = Path(app_data).expanduser()
-    else:
-        configured_root = os.environ.get(XDG_CONFIG_HOME_ENV, "").strip()
-        config_root = (
-            Path(configured_root).expanduser()
-            if configured_root
-            else Path.home() / ".config"
-        )
-    return config_root / APP_CONFIG_DIR_NAME / SETTINGS_FILE_NAME
+        return Path(app_data).expanduser()
+    configured_root = os.environ.get(XDG_CONFIG_HOME_ENV, "").strip()
+    return (
+        Path(configured_root).expanduser()
+        if configured_root
+        else Path.home() / ".config"
+    )
+
+
+def _default_settings_file() -> Path:
+    return _default_config_root() / APP_CONFIG_DIR_NAME / SETTINGS_FILE_NAME
 
 
 DEFAULT_SETTINGS_FILE = _default_settings_file()
@@ -55,6 +59,15 @@ def _settings_file() -> Path:
     if configured:
         return Path(configured).expanduser()
     return _default_settings_file()
+
+
+def resolve_prismqml_config_path() -> Path:
+    """返回 MCNeteaseToolPE 独占的 PrismQML 引擎配置路径。"""
+
+    configured = os.environ.get(PRISMQML_CONFIG_FILE_ENV, "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return _default_config_root() / APP_CONFIG_DIR_NAME / PRISMQML_CONFIG_FILE_NAME
 
 
 class _StringEntry(SettingEntry):
