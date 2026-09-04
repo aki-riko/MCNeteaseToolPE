@@ -15,6 +15,9 @@ Item {
     property string projectDir: ""
     property double totalBytes: 0
     property bool embedded: false
+    property var pendingItems: []
+    property int pendingItemIndex: 0
+    readonly property int itemBatchSize: 32
 
     function urlToPath(url) {
         var s = url.toString()
@@ -31,9 +34,35 @@ Item {
         return (mb / 1024).toFixed(2) + " GB"
     }
 
+    function clearItemQueue() {
+        itemAppendTimer.stop()
+        pendingItems = []
+        pendingItemIndex = 0
+        itemModel.clear()
+    }
+
+    function installItems(items) {
+        clearItemQueue()
+        pendingItems = items || []
+        if (pendingItems.length > 0) itemAppendTimer.start()
+    }
+
+    function appendItemBatch() {
+        var source = pendingItems || []
+        var end = Math.min(source.length, pendingItemIndex + itemBatchSize)
+        for (var i = pendingItemIndex; i < end; ++i)
+            itemModel.append({ "path": source[i] })
+        pendingItemIndex = end
+        if (pendingItemIndex >= source.length) {
+            itemAppendTimer.stop()
+            pendingItems = []
+            pendingItemIndex = 0
+        }
+    }
+
     onProjectDirChanged: {
         if (!page.embedded) return
-        itemModel.clear()
+        clearItemQueue()
         logModel.clear()
         page.totalBytes = 0
     }
@@ -43,7 +72,7 @@ Item {
         title: qsTr("选择要清理的工程目录")
         onAccepted: {
             page.projectDir = urlToPath(selectedFolder)
-            itemModel.clear()
+            page.clearItemQueue()
             logModel.clear()
             backend.scan(page.projectDir)
         }
@@ -138,7 +167,7 @@ Item {
                             text: qsTr("扫描")
                             enabled: page.projectDir !== "" && !backend.busy
                             onClicked: {
-                                itemModel.clear()
+                                page.clearItemQueue()
                                 backend.scan(page.projectDir)
                             }
                         }
@@ -221,15 +250,20 @@ Item {
             logModel.append({ "text": text, "level": level })
         }
         function onScanned(items, totalBytes) {
-            itemModel.clear()
             page.totalBytes = totalBytes
-            for (var i = 0; i < items.length; ++i)
-                itemModel.append({ "path": items[i] })
+            page.installItems(items)
         }
         function onFinished(success, removedCount, freedBytes, message) {
-            itemModel.clear()
+            page.clearItemQueue()
             logModel.append({ "text": message, "level": success ? "info" : "error" })
         }
+    }
+
+    Timer {
+        id: itemAppendTimer
+        interval: 1
+        repeat: true
+        onTriggered: page.appendItemBatch()
     }
 
     ListModel { id: itemModel }

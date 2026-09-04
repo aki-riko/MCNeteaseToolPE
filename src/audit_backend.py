@@ -12,22 +12,34 @@ import sys
 
 from PySide6.QtCore import QObject, Property, QProcess, Signal, Slot
 
-from .pack_scanner import ensure_required_pack_directories
-
-
 LOGGER = logging.getLogger(__name__)
 
 
-def _audit_worker_command(project_dir: str) -> tuple[str, list[str]]:
+def _prepare_audit(project_dir: str) -> list[str]:
+    """Create required pack directories without blocking the Qt event loop."""
+
+    from .pack_scanner import ensure_required_pack_directories
+
+    return ensure_required_pack_directories(project_dir)
+
+
+def _audit_worker_command(
+    project_dir: str,
+    *,
+    skip_required_dirs: bool = False,
+) -> tuple[str, list[str]]:
     """Return the source or standalone command for the isolated audit worker."""
 
     executable = os.path.abspath(sys.executable)
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     entry_point = os.path.join(project_root, "audit_worker.py")
     executable_name = os.path.basename(executable).casefold()
+    arguments = ["--audit-stream-json", project_dir]
+    if skip_required_dirs:
+        arguments.append("--skip-required-dirs")
     if executable_name.startswith("python") and os.path.isfile(entry_point):
-        return executable, ["-u", entry_point, "--audit-stream-json", project_dir]
-    return executable, ["--audit-stream-json", project_dir]
+        return executable, ["-u", entry_point, *arguments]
+    return executable, arguments
 
 
 class AuditBackend(QObject):
@@ -48,6 +60,8 @@ class AuditBackend(QObject):
         self._pending_issues: list[dict[str, object]] | None = None
         self._protocol_error = ""
         self._settled = False
+        self._prepare_handle = None
+        self._project_dir = ""
 
     def _is_busy(self) -> bool:
         return self._busy
@@ -65,16 +79,48 @@ class AuditBackend(QObject):
         if self._busy:
             self.logMessage.emit("正忙,请稍候", "warn")
             return
+        from prismqml import run_in_pool
+
+        self._project_dir = project_dir
+        self._set_busy(True)
+        self._pending_issues = None
+        self._protocol_error = ""
+        self._settled = False
         try:
-            created = ensure_required_pack_directories(project_dir)
-        except (OSError, ValueError) as error:
-            LOGGER.exception("自动补全网易必需目录失败")
-            self.logMessage.emit(f"自动补全必需目录失败:{error}", "error")
-            self.taskFailed.emit(str(error))
+            handle = run_in_pool(_prepare_audit, project_dir)
+        except Exception as error:  # noqa: BLE001 - 调度失败必须恢复 UI 状态
+            LOGGER.exception("审核前置准备启动失败")
+            self._fail(f"自动补全必需目录失败:{error}")
+            return
+        self._prepare_handle = handle
+        handle.succeeded.connect(
+            lambda created, task=handle: self._on_prepare_succeeded(task, created)
+        )
+        handle.failed.connect(
+            lambda failure, task=handle: self._on_prepare_failed(task, failure)
+        )
+
+    def _on_prepare_succeeded(self, handle: object, created: object) -> None:
+        if handle is not self._prepare_handle:
+            return
+        self._prepare_handle = None
+        if not isinstance(created, list) or not all(isinstance(path, str) for path in created):
+            self._fail("审核前置准备返回了无效目录列表")
             return
         for path in created:
             self.logMessage.emit(f"已自动创建必需目录:{path}", "success")
-        program, arguments = _audit_worker_command(project_dir)
+        self._start_audit_process(self._project_dir)
+
+    def _on_prepare_failed(self, handle: object, failure: object) -> None:
+        if handle is not self._prepare_handle:
+            return
+        self._prepare_handle = None
+        exception = getattr(failure, "exception", failure)
+        LOGGER.error("审核前置准备失败:%s", exception, exc_info=True)
+        self._fail(f"自动补全必需目录失败:{exception}")
+
+    def _start_audit_process(self, project_dir: str) -> None:
+        program, arguments = _audit_worker_command(project_dir, skip_required_dirs=True)
         process = QProcess(self)
         process.setProgram(program)
         process.setArguments(arguments)
@@ -86,10 +132,6 @@ class AuditBackend(QObject):
         self._process = process
         self._stdout_buffer.clear()
         self._stderr_buffer.clear()
-        self._pending_issues = None
-        self._protocol_error = ""
-        self._settled = False
-        self._set_busy(True)
         self.logMessage.emit(f"开始审核:{project_dir}", "info")
         process.start()
 

@@ -120,29 +120,47 @@ class TracyPerformanceController:
     def continuous_active(self) -> bool:
         return self._continuous_active
 
+    def probe_status(self) -> dict[str, object]:
+        """Probe Tracy without mutating controller state.
+
+        The performance backend runs this method in its worker pool and applies
+        the returned snapshot on the Qt thread.
+        """
+
+        if self._busy:
+            return dict(self._status)
+        try:
+            return dict(self._probe())
+        except (OSError, TracyAnalysisError, TypeError, ValueError) as error:
+            LOGGER.warning("探测原生 Tracy 失败：%s", error)
+            status = self._empty_status()
+            status["error"] = str(error)
+            return status
+
+    def apply_probe_status(self, status: Mapping[str, object]) -> None:
+        """Publish a worker-produced Tracy status on the owner thread."""
+
+        self._status = dict(status)
+        self._status_checked = True
+
     def refresh_status(self) -> None:
         if self._busy:
             LOGGER.debug("Tracy 抓取进行中，跳过会占用 8086 的状态探测")
             return
-        try:
-            self._status = dict(self._probe())
-        except (OSError, TracyAnalysisError, TypeError, ValueError) as error:
-            LOGGER.warning("探测原生 Tracy 失败：%s", error)
-            self._status = self._empty_status()
-            self._status["error"] = str(error)
-        self._status_checked = True
+        self.apply_probe_status(self.probe_status())
 
-    def quick_capture(self) -> None:
+    def quick_capture(self, *, refresh: bool = True) -> None:
         """使用默认参数采集热点；已有首次结果时自动生成前后对比。"""
         label = "after" if self._baseline_capture_id else "before"
-        self.capture(self._capture_seconds, "", label)
+        self.capture(self._capture_seconds, "", label, refresh=refresh)
 
-    def start_continuous(self) -> bool:
+    def start_continuous(self, *, refresh: bool = True) -> bool:
         """启动连续 Tracy 窗口，直到显式请求停止。"""
         if self._busy:
             self._emit_result(False, "Tracy 正在采样，请先结束当前任务")
             return False
-        self.refresh_status()
+        if refresh:
+            self.refresh_status()
         if not self._capture_is_ready():
             return False
         self._session_summary = new_session_summary()
@@ -168,7 +186,14 @@ class TracyPerformanceController:
             self._state_changed()
         return True
 
-    def capture(self, seconds: int, name_contains: str, label: str) -> None:
+    def capture(
+        self,
+        seconds: int,
+        name_contains: str,
+        label: str,
+        *,
+        refresh: bool = True,
+    ) -> None:
         capture_label = self._validate_capture_request(label)
         if capture_label is None:
             return
@@ -186,7 +211,8 @@ class TracyPerformanceController:
             return
         if not self._comparison_window_is_valid(duration, capture_label):
             return
-        self.refresh_status()
+        if refresh:
+            self.refresh_status()
         if not self._capture_is_ready():
             return
         self._start_capture_task(duration, name_contains.strip(), capture_label)

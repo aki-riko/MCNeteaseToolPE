@@ -11,6 +11,7 @@ import logging
 import os
 from pathlib import Path
 import tempfile
+import time
 from typing import NamedTuple
 import zipfile
 
@@ -18,7 +19,7 @@ from PySide6.QtCore import QObject, Property, Signal, Slot
 
 from prismqml import current_task, run_in_thread
 
-from .config import ZIP_COMPRESSION_LEVEL
+from .config import TASK_PROGRESS_THROTTLE_MS, ZIP_COMPRESSION_LEVEL
 from .pack_scanner import _collect_pack_dirs
 from .project_structure import is_map_project
 
@@ -214,10 +215,18 @@ def _create_zip_task(project_dir: str) -> ArchiveResult:
     """Create one archive through PrismQML's managed task context."""
 
     task = current_task()
+    throttle_seconds = TASK_PROGRESS_THROTTLE_MS / 1000.0
+    last_report = float("-inf")
 
     def report_progress(current: int, total: int) -> None:
+        nonlocal last_report
         task.raise_if_cancelled()
+        now = time.monotonic()
+        is_boundary = current <= 0 or current >= total
+        if not is_boundary and now - last_report < throttle_seconds:
+            return
         task.report_progress((current, total))
+        last_report = now
 
     return create_zip_archive(project_dir, progress=report_progress)
 

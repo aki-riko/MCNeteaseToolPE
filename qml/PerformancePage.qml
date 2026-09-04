@@ -23,7 +23,7 @@ Item {
     }
 
     function _refresh() {
-        if (backend) backend.refresh()
+        if (backend) backend.refreshAsync()
     }
 
     function _prepareDetailsDrawer() {

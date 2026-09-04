@@ -19,6 +19,9 @@ Item {
     property int errorCount: 0
     property int warningCount: 0
     property string resultMessage: ""
+    property var pendingIssues: []
+    property int pendingIssueIndex: 0
+    readonly property int issueBatchSize: 24
     readonly property bool busy: backend ? backend.busy : false
 
     FontMetrics {
@@ -47,7 +50,7 @@ Item {
     }
 
     function clearResult() {
-        issueModel.clear()
+        clearIssueQueue()
         logModel.clear()
         hasResult = false
         passed = false
@@ -55,6 +58,39 @@ Item {
         errorCount = 0
         warningCount = 0
         resultMessage = ""
+    }
+
+    function clearIssueQueue() {
+        issueAppendTimer.stop()
+        pendingIssues = []
+        pendingIssueIndex = 0
+        issueModel.clear()
+    }
+
+    function installIssues(issues) {
+        clearIssueQueue()
+        pendingIssues = issues || []
+        if (pendingIssues.length > 0) issueAppendTimer.start()
+    }
+
+    function appendIssueBatch() {
+        var source = pendingIssues || []
+        var end = Math.min(source.length, pendingIssueIndex + issueBatchSize)
+        for (var i = pendingIssueIndex; i < end; ++i) {
+            issueModel.append({
+                "codeName": source[i].codeName,
+                "severity": source[i].severity,
+                "title": source[i].title,
+                "detail": source[i].detail,
+                "path": source[i].path
+            })
+        }
+        pendingIssueIndex = end
+        if (pendingIssueIndex >= source.length) {
+            issueAppendTimer.stop()
+            pendingIssues = []
+            pendingIssueIndex = 0
+        }
     }
 
     function refreshProjectKind() {
@@ -454,17 +490,15 @@ Item {
             page.errorCount = errors
             page.warningCount = warnings
             page.resultMessage = message
-            issueModel.clear()
-            for (var i = 0; i < issues.length; ++i) {
-                issueModel.append({
-                    "codeName": issues[i].codeName,
-                    "severity": issues[i].severity,
-                    "title": issues[i].title,
-                    "detail": issues[i].detail,
-                    "path": issues[i].path
-                })
-            }
+            page.installIssues(issues)
         }
+    }
+
+    Timer {
+        id: issueAppendTimer
+        interval: 1
+        repeat: true
+        onTriggered: page.appendIssueBatch()
     }
 
     ListModel { id: issueModel }

@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 from pathlib import Path
+import threading
 from typing import Callable
 
 from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
@@ -34,6 +36,90 @@ from .tracy_backend import MAX_TRACY_CAPTURES, TracyPerformanceController
 LOGGER = logging.getLogger(__name__)
 SAMPLE_INTERVAL_MS = 1000
 MAX_HISTORY_SAMPLES = 120
+
+
+@dataclass(frozen=True)
+class _RefreshSnapshot:
+    """Immutable result produced away from the Qt event loop."""
+
+    discovery: dict[str, object]
+    processes: list[ProcessDescriptor] | None
+    discovery_error: str
+    process_error: str
+    tracy_status: dict[str, object]
+
+
+def _discover_snapshot(
+    locator: object,
+    current: dict[str, object],
+    force: bool,
+) -> tuple[dict[str, object], str]:
+    if not force and str(current.get("root", "")).strip():
+        return current, ""
+    try:
+        discovered = locator.discover()  # type: ignore[attr-defined]
+    except (OSError, RuntimeError, TypeError, ValueError) as error:
+        LOGGER.warning("后台发现 MCStudio 失败：%s", error)
+        return current, str(error)
+    if not isinstance(discovered, dict):
+        return current, "返回值不是对象"
+    return dict(discovered), ""
+
+
+def _list_process_snapshot(
+    sampler: object | None,
+    sampler_lock: object,
+    include: bool,
+) -> tuple[list[ProcessDescriptor] | None, str]:
+    if not include:
+        return None, ""
+    if sampler is None:
+        return [], ""
+    try:
+        with sampler_lock:  # type: ignore[union-attr]
+            processes = sampler.list_candidates()  # type: ignore[attr-defined]
+        return list(processes), ""
+    except OSError as error:
+        LOGGER.warning("后台枚举 Minecraft 进程失败：%s", error)
+        return None, str(error)
+
+
+def _refresh_target_task(
+    locator: object,
+    sampler: object | None,
+    probe: Callable[[], dict[str, object]],
+    current_discovery: dict[str, object],
+    sampler_lock: object,
+    *,
+    force_discovery: bool,
+    include_processes: bool,
+) -> _RefreshSnapshot:
+    discovery, discovery_error = _discover_snapshot(
+        locator,
+        current_discovery,
+        force_discovery,
+    )
+    processes, process_error = _list_process_snapshot(
+        sampler,
+        sampler_lock,
+        include_processes,
+    )
+    return _RefreshSnapshot(
+        discovery,
+        processes,
+        discovery_error,
+        process_error,
+        dict(probe()),
+    )
+
+
+def _sample_process_task(
+    sampler: object,
+    pid: int,
+    sampler_lock: object,
+) -> ProcessSample:
+    with sampler_lock:  # type: ignore[union-attr]
+        return sampler.sample(pid)  # type: ignore[attr-defined]
 
 
 class PerformanceBackend(QObject):
@@ -95,6 +181,17 @@ class PerformanceBackend(QObject):
         self._session_cpu_total = 0.0
         self._session_cpu_peak = 0.0
         self._session_memory_peak = 0.0
+        self._sampler_lock = threading.RLock()
+        self._target_refresh_handle: object | None = None
+        self._target_refresh_pending = False
+        self._target_refresh_pending_auto = False
+        self._target_refresh_pending_processes = False
+        self._target_refresh_force_discovery = False
+        self._target_refresh_auto = False
+        self._target_refresh_processes = False
+        self._target_refresh_report_errors = False
+        self._sample_handle: object | None = None
+        self._sample_pending = False
 
     def _initialize_monitors(
         self,
@@ -115,10 +212,10 @@ class PerformanceBackend(QObject):
         self._airperf = airperf_monitor or AirPerfMonitor(self.stateChanged.emit)
         self._timer = QTimer(self)
         self._timer.setInterval(SAMPLE_INTERVAL_MS)
-        self._timer.timeout.connect(self._sample_selected_process)
+        self._timer.timeout.connect(self._schedule_process_sample)
         self._discovery_timer = QTimer(self)
         self._discovery_timer.setInterval(TRACY_PROBE_INTERVAL_MS)
-        self._discovery_timer.timeout.connect(self.refreshPerformanceTarget)
+        self._discovery_timer.timeout.connect(self.refreshPerformanceTargetAsync)
         self._discovery_timer.start()
 
     def _handle_tracy_continuous_finished(self, success: bool) -> None:
@@ -144,6 +241,8 @@ class PerformanceBackend(QObject):
             "processes": [process_payload(item) for item in self._processes],
             "selectedPid": self._selected_pid,
             "monitoring": self._monitoring,
+            "refreshing": self._target_refresh_handle is not None,
+            "sampling": self._sample_handle is not None,
             "unifiedMonitoring": (
                 self._monitoring
                 or self._tracy.continuous_active
@@ -184,21 +283,187 @@ class PerformanceBackend(QObject):
         self._tracy.refresh_status()
         self.stateChanged.emit()
 
+    @Slot()
+    def refreshAsync(self) -> None:
+        """Refresh discovery and targets without blocking the Qt thread."""
+
+        self._request_target_refresh(
+            auto_start=False,
+            force_discovery=True,
+            include_processes=True,
+            report_errors=True,
+        )
+
+    @Slot()
+    def refreshTracyStatusAsync(self) -> None:
+        """Probe Tracy on the worker pool and publish its snapshot later."""
+
+        self._request_target_refresh(
+            auto_start=False,
+            force_discovery=False,
+            include_processes=False,
+            report_errors=True,
+        )
+
+    @Slot()
+    def refreshPerformanceTargetAsync(self) -> None:
+        """Periodic target refresh performed outside the GUI thread."""
+
+        self._request_target_refresh(
+            auto_start=True,
+            force_discovery=False,
+            include_processes=True,
+            report_errors=False,
+        )
+
+    def _request_target_refresh(
+        self,
+        *,
+        auto_start: bool,
+        force_discovery: bool,
+        include_processes: bool,
+        report_errors: bool,
+    ) -> None:
+        if self._target_refresh_handle is not None:
+            self._target_refresh_pending = True
+            self._target_refresh_pending_auto |= auto_start
+            self._target_refresh_pending_processes |= include_processes
+            self._target_refresh_force_discovery |= force_discovery
+            return
+        self._start_target_refresh(
+            auto_start=auto_start,
+            force_discovery=force_discovery,
+            include_processes=include_processes,
+            report_errors=report_errors,
+        )
+
+    def _start_target_refresh(
+        self,
+        *,
+        auto_start: bool,
+        force_discovery: bool,
+        include_processes: bool,
+        report_errors: bool,
+    ) -> None:
+        from prismqml import run_in_pool
+
+        self._target_refresh_auto = auto_start
+        self._target_refresh_force_discovery = force_discovery
+        self._target_refresh_processes = include_processes
+        self._target_refresh_report_errors = report_errors
+        try:
+            handle = run_in_pool(
+                _refresh_target_task,
+                self._locator,
+                self._sampler,
+                self._tracy.probe_status,
+                dict(self._discovery),
+                self._sampler_lock,
+                force_discovery=force_discovery,
+                include_processes=include_processes,
+            )
+            handle.succeeded.connect(
+                lambda result, task=handle: self._on_target_refresh_succeeded(task, result)
+            )
+            handle.failed.connect(
+                lambda failure, task=handle: self._on_target_refresh_failed(task, failure)
+            )
+        except Exception as error:  # noqa: BLE001 - 调度失败必须恢复监测状态
+            LOGGER.exception("后台性能目标刷新启动失败")
+            self._target_refresh_auto = False
+            self._target_refresh_processes = False
+            self._target_refresh_report_errors = False
+            if report_errors:
+                self._emit_result(False, f"刷新性能目标失败：{error}")
+            return
+        self._target_refresh_handle = handle
+        self.stateChanged.emit()
+
+    def _on_target_refresh_succeeded(self, handle: object, result: object) -> None:
+        if handle is not self._target_refresh_handle:
+            return
+        auto_start = self._target_refresh_auto
+        include_processes = self._target_refresh_processes
+        report_errors = self._target_refresh_report_errors
+        self._target_refresh_handle = None
+        if not isinstance(result, _RefreshSnapshot):
+            LOGGER.error("后台性能目标刷新返回了无效结果")
+            if report_errors:
+                self._emit_result(False, "刷新性能目标失败：后台返回值无效")
+        else:
+            self._apply_target_snapshot(result, include_processes, report_errors)
+            if auto_start:
+                self._start_automatic_monitoring_if_ready()
+        self.stateChanged.emit()
+        self._drain_pending_target_refresh()
+
+    def _on_target_refresh_failed(self, handle: object, failure: object) -> None:
+        if handle is not self._target_refresh_handle:
+            return
+        report_errors = self._target_refresh_report_errors
+        self._target_refresh_handle = None
+        exception = getattr(failure, "exception", failure)
+        LOGGER.error("后台性能目标刷新失败：%s", exception, exc_info=True)
+        if report_errors:
+            self._emit_result(False, f"刷新性能目标失败：{exception}")
+        self.stateChanged.emit()
+        self._drain_pending_target_refresh()
+
+    def _apply_target_snapshot(
+        self,
+        snapshot: _RefreshSnapshot,
+        include_processes: bool,
+        report_errors: bool,
+    ) -> None:
+        if snapshot.discovery_error and report_errors:
+            self._emit_result(False, f"发现 MCStudio 失败：{snapshot.discovery_error}")
+        elif not snapshot.discovery_error:
+            self._discovery = dict(snapshot.discovery)
+        if include_processes and snapshot.processes is not None:
+            self._install_processes(snapshot.processes)
+        if snapshot.process_error and report_errors:
+            self._emit_result(False, f"枚举 Minecraft 进程失败：{snapshot.process_error}")
+        self._tracy.apply_probe_status(snapshot.tracy_status)
+
+    def _install_processes(self, processes: list[ProcessDescriptor]) -> None:
+        self._processes = list(processes)
+        available_pids = {item.pid for item in self._processes}
+        self._reconcile_selected_process(available_pids)
+
+    def _drain_pending_target_refresh(self) -> None:
+        if not self._target_refresh_pending:
+            return
+        auto_start = self._target_refresh_pending_auto
+        include_processes = self._target_refresh_pending_processes
+        force_discovery = self._target_refresh_force_discovery
+        self._target_refresh_pending = False
+        self._target_refresh_pending_auto = False
+        self._target_refresh_pending_processes = False
+        self._target_refresh_force_discovery = False
+        QTimer.singleShot(
+            0,
+            lambda: self._start_target_refresh(
+                auto_start=auto_start,
+                force_discovery=force_discovery,
+                include_processes=include_processes,
+                report_errors=not auto_start,
+            ),
+        )
+
     def _refresh_processes(self, *, report_errors: bool = True) -> None:
         if self._sampler is None:
             self._processes = []
             self._selected_pid = 0
             return
         try:
-            processes = self._sampler.list_candidates()
+            with self._sampler_lock:
+                processes = self._sampler.list_candidates()
         except OSError as error:
             LOGGER.exception("枚举 Minecraft 进程失败")
             if report_errors:
                 self._emit_result(False, f"枚举 Minecraft 进程失败：{error}")
             return
-        self._processes = list(processes)
-        available_pids = {item.pid for item in self._processes}
-        self._reconcile_selected_process(available_pids)
+        self._install_processes(list(processes))
 
     def _reconcile_selected_process(self, available_pids: set[int]) -> None:
         if self._selected_pid in available_pids:
@@ -245,10 +510,11 @@ class PerformanceBackend(QObject):
         if not self._selected_pid:
             self._emit_result(False, "请先启动并选择一个 ModPC/Minecraft 进程")
             return False
-        self._sampler.reset(self._selected_pid)
         self._monitoring = True
         self._timer.start()
         self.stateChanged.emit()
+        with self._sampler_lock:
+            self._sampler.reset(self._selected_pid)
         self._sample_selected_process()
         return self._monitoring
 
@@ -270,7 +536,7 @@ class PerformanceBackend(QObject):
                 self._start_process_monitoring()
             return False
         self._reset_session_metrics()
-        if not self._tracy.start_continuous():
+        if not self._tracy.start_continuous(refresh=False):
             return False
         if not self._start_process_monitoring():
             self._tracy.stop_continuous()
@@ -313,7 +579,7 @@ class PerformanceBackend(QObject):
         self._auto_monitoring = value
         if value:
             self._auto_blocked_pid = 0
-            self.refreshPerformanceTarget()
+            self.refreshPerformanceTargetAsync()
         else:
             self.stateChanged.emit()
 
@@ -344,6 +610,7 @@ class PerformanceBackend(QObject):
 
     def _stop_monitoring(self, message: str, *, success: bool = True) -> None:
         self._timer.stop()
+        self._sample_pending = False
         changed = self._monitoring
         self._monitoring = False
         if changed:
@@ -362,7 +629,8 @@ class PerformanceBackend(QObject):
         if not self._monitoring or self._sampler is None or not self._selected_pid:
             return
         try:
-            sample = self._sampler.sample(self._selected_pid)
+            with self._sampler_lock:
+                sample = self._sampler.sample(self._selected_pid)
         except (OSError, ProcessLookupError) as error:
             failed_pid = self._selected_pid
             LOGGER.warning("采样进程 PID %s 失败：%s", failed_pid, error)
@@ -384,6 +652,76 @@ class PerformanceBackend(QObject):
         self._last_sample = sample
         self._append_sample(sample)
         self.stateChanged.emit()
+
+    def _schedule_process_sample(self) -> None:
+        """Schedule the periodic Win32 sample outside the Qt event loop."""
+
+        if not self._monitoring or self._sampler is None or not self._selected_pid:
+            return
+        if self._sample_handle is not None:
+            self._sample_pending = True
+            return
+        from prismqml import run_in_pool
+
+        pid = self._selected_pid
+        try:
+            handle = run_in_pool(
+                _sample_process_task,
+                self._sampler,
+                pid,
+                self._sampler_lock,
+            )
+        except Exception as error:  # noqa: BLE001 - 调度失败必须停止采样
+            LOGGER.exception("后台进程采样启动失败")
+            self._stop_monitoring(f"目标进程不可用：{error}", success=False)
+            return
+        self._sample_handle = handle
+        handle.succeeded.connect(
+            lambda result, task=handle, sample_pid=pid: self._on_sample_succeeded(
+                task, sample_pid, result
+            )
+        )
+        handle.failed.connect(
+            lambda failure, task=handle, sample_pid=pid: self._on_sample_failed(
+                task, sample_pid, failure
+            )
+        )
+        self.stateChanged.emit()
+
+    def _on_sample_succeeded(self, handle: object, pid: int, result: object) -> None:
+        if handle is not self._sample_handle:
+            return
+        self._sample_handle = None
+        if self._monitoring and pid == self._selected_pid and isinstance(result, ProcessSample):
+            self._last_sample = result
+            self._append_sample(result)
+            self.stateChanged.emit()
+        self._drain_pending_sample()
+
+    def _on_sample_failed(self, handle: object, pid: int, failure: object) -> None:
+        if handle is not self._sample_handle:
+            return
+        self._sample_handle = None
+        exception = getattr(failure, "exception", failure)
+        LOGGER.warning("采样进程 PID %s 失败：%s", pid, exception)
+        if self._monitoring and pid == self._selected_pid:
+            message = f"目标进程不可用：{exception}"
+            if self._tracy.continuous_active:
+                self._stop_unified_monitoring(
+                    message + "，监测正在结束",
+                    success=False,
+                    manual=False,
+                )
+            else:
+                self._stop_monitoring(message, success=False)
+        self.stateChanged.emit()
+        self._drain_pending_sample()
+
+    def _drain_pending_sample(self) -> None:
+        if not self._sample_pending:
+            return
+        self._sample_pending = False
+        QTimer.singleShot(0, self._schedule_process_sample)
 
     def _append_sample(self, sample: ProcessSample) -> None:
         self._sample_number += 1
@@ -454,11 +792,11 @@ class PerformanceBackend(QObject):
 
     @Slot(int, str, str)
     def captureTracy(self, seconds: int, name_contains: str, label: str) -> None:
-        self._tracy.capture(seconds, name_contains, label)
+        self._tracy.capture(seconds, name_contains, label, refresh=False)
 
     @Slot()
     def captureTracyQuick(self) -> None:
-        self._tracy.quick_capture()
+        self._tracy.quick_capture(refresh=False)
 
     @Slot(str)
     def selectTracyCapture(self, capture_id: str) -> None:

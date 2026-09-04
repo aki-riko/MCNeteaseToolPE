@@ -19,6 +19,9 @@ Item {
     property int errorCount: 0
     property int warningCount: 0
     property bool embedded: false
+    property var pendingIssues: []
+    property int pendingIssueIndex: 0
+    readonly property int issueBatchSize: 24
 
     function urlToPath(url) {
         var s = url.toString()
@@ -26,9 +29,43 @@ Item {
         return decodeURIComponent(s)
     }
 
+    function clearIssueQueue() {
+        issueAppendTimer.stop()
+        pendingIssues = []
+        pendingIssueIndex = 0
+        issueModel.clear()
+    }
+
+    function installIssues(issues) {
+        clearIssueQueue()
+        pendingIssues = issues || []
+        if (pendingIssues.length > 0) issueAppendTimer.start()
+    }
+
+    function appendIssueBatch() {
+        var source = pendingIssues || []
+        var end = Math.min(source.length, pendingIssueIndex + issueBatchSize)
+        for (var i = pendingIssueIndex; i < end; ++i) {
+            issueModel.append({
+                "code": source[i].code,
+                "codeName": source[i].codeName,
+                "severity": source[i].severity,
+                "title": source[i].title,
+                "detail": source[i].detail,
+                "path": source[i].path
+            })
+        }
+        pendingIssueIndex = end
+        if (pendingIssueIndex >= source.length) {
+            issueAppendTimer.stop()
+            pendingIssues = []
+            pendingIssueIndex = 0
+        }
+    }
+
     onProjectDirChanged: {
         if (!page.embedded) return
-        issueModel.clear()
+        clearIssueQueue()
         logModel.clear()
         page.hasResult = false
         page.passed = false
@@ -41,7 +78,7 @@ Item {
         title: qsTr("选择要审核的工程目录")
         onAccepted: {
             page.projectDir = urlToPath(selectedFolder)
-            issueModel.clear()
+            page.clearIssueQueue()
             logModel.clear()
             page.hasResult = false
             backend.audit(page.projectDir)
@@ -139,7 +176,7 @@ Item {
                             style: Enums.button.style_primary
                             enabled: page.projectDir !== "" && !backend.busy
                             onClicked: {
-                                issueModel.clear()
+                                page.clearIssueQueue()
                                 page.hasResult = false
                                 backend.audit(page.projectDir)
                             }
@@ -293,18 +330,15 @@ Item {
             page.passed = passed
             page.errorCount = errorCount
             page.warningCount = warningCount
-            issueModel.clear()
-            for (var i = 0; i < issues.length; ++i) {
-                issueModel.append({
-                    "code": issues[i].code,
-                    "codeName": issues[i].codeName,
-                    "severity": issues[i].severity,
-                    "title": issues[i].title,
-                    "detail": issues[i].detail,
-                    "path": issues[i].path
-                })
-            }
+            page.installIssues(issues)
         }
+    }
+
+    Timer {
+        id: issueAppendTimer
+        interval: 1
+        repeat: true
+        onTriggered: page.appendIssueBatch()
     }
 
     ListModel { id: issueModel }
