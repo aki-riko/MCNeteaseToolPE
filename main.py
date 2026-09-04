@@ -125,25 +125,6 @@ def _configure_splash(window: MainWindow) -> None:
     )
 
 
-def _disable_broken_splash_icon_shadow(window: MainWindow) -> bool:
-    """Keep the decoded Splash icon visible on affected Qt render paths."""
-
-    root_window = getattr(window, "_window", None)
-    if root_window is None:
-        LOGGER.warning("Splash 根窗口尚未创建，无法关闭图标阴影")
-        return False
-
-    try:
-        splash = root_window.property("_splashInstance")
-        if splash is None or not splash.setProperty("enableShadow", False):
-            LOGGER.warning("Splash 实例不可用，无法关闭图标阴影")
-            return False
-    except (AttributeError, RuntimeError, TypeError):
-        LOGGER.warning("关闭 Splash 图标阴影失败", exc_info=True)
-        return False
-    return True
-
-
 def _build_system_tray(app: App, window: MainWindow) -> SystemTrayIcon:
     """Build the PrismQML tray icon, menu, and activation behavior."""
 
@@ -227,9 +208,13 @@ def main() -> int:
     if cli_status is not None:
         return cli_status
 
-    App.setApplicationName(APP_TITLE)
+    # 0.4.2.7 的 FastSplash 在 App 创建阶段读取 display name，提前发布品牌信息。
+    App.setApplicationDisplayName(APP_TITLE)
     app = App(
         application_icon=_APP_ICON,
+        splash_subtitle=SPLASH_SUBTITLE,
+        window_width=WINDOW_W,
+        window_height=WINDOW_H,
         config_path=resolve_prismqml_config_path(),
         persist_appearance=True,
     )
@@ -241,7 +226,6 @@ def main() -> int:
 
     win = _create_main_window(app)
     win.setWindowTitle(APP_TITLE)
-    win.resize(WINDOW_W, WINDOW_H)
     _configure_splash(win)
 
     # 三项工程能力共享一个顶级页面与目录选择，子后端仍保持职责隔离。
@@ -294,8 +278,6 @@ def main() -> int:
     # 托盘必须在主窗口可关闭前完成装配，避免关闭后留下无入口的后台进程。
     _enable_system_tray(app, win)
     win.show()
-    # MultiEffect 阴影会在部分 Qt 渲染路径中把 Splash 图标层变透明。
-    _disable_broken_splash_icon_shadow(win)
     return app.exec()
 
 

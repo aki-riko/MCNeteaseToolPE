@@ -39,6 +39,17 @@ def test_prismqml_release_is_pinned_and_installed() -> None:
     assert version("prismqml") == EXPECTED_PRISMQML_VERSION
 
 
+def test_main_uses_prismqml_startup_splash_contract() -> None:
+    source = _read("main.py")
+
+    assert "App.setApplicationDisplayName(APP_TITLE)" in source
+    assert "splash_subtitle=SPLASH_SUBTITLE" in source
+    assert "window_width=WINDOW_W" in source
+    assert "window_height=WINDOW_H" in source
+    assert "win.resize(WINDOW_W, WINDOW_H)" not in source
+    assert "_disable_broken_splash_icon_shadow" not in source
+
+
 def test_prismqml_config_is_owned_by_mcneteasetoolpe() -> None:
     main_source = _read("main.py")
     settings_source = _read("src/settings_backend.py")

@@ -83,28 +83,8 @@ class _FakeApp:
         self.quit_on_last_window_closed = enabled
 
 
-class _FakeSplash:
-    def __init__(self, accepts_property: bool = True) -> None:
-        self.accepts_property = accepts_property
-        self.properties: dict[str, object] = {}
-
-    def setProperty(self, name: str, value: object) -> bool:
-        self.properties[name] = value
-        return self.accepts_property
-
-
-class _FakeSplashRoot:
-    def __init__(self, splash: _FakeSplash | None) -> None:
-        self.splash = splash
-
-    def property(self, name: str):
-        assert name == "_splashInstance"
-        return self.splash
-
-
 class _FakeSplashWindow:
-    def __init__(self, splash: _FakeSplash | None = None) -> None:
-        self._window = _FakeSplashRoot(splash) if splash is not None else None
+    def __init__(self) -> None:
         self.splash_arguments: dict[str, str] = {}
 
     def showSplash(self, **kwargs: str) -> None:
@@ -183,18 +163,3 @@ def test_splash_branding_is_explicit() -> None:
         "title": main.APP_TITLE,
         "subtitle": main.SPLASH_SUBTITLE,
     }
-
-
-def test_splash_icon_shadow_is_disabled_after_root_creation() -> None:
-    splash = _FakeSplash()
-    window = _FakeSplashWindow(splash)
-
-    assert main._disable_broken_splash_icon_shadow(window) is True
-    assert splash.properties == {"enableShadow": False}
-
-
-def test_splash_icon_shadow_workaround_reports_missing_root(caplog) -> None:
-    window = _FakeSplashWindow()
-
-    assert main._disable_broken_splash_icon_shadow(window) is False
-    assert "Splash 根窗口尚未创建" in caplog.text
