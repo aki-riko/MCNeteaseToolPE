@@ -134,6 +134,25 @@ def test_developer_owned_local_modules_are_exempt(tmp_path: Path) -> None:
     assert _code18_errors(tmp_path) == []
 
 
+def test_local_modules_under_sdk_named_roots_are_exempt(tmp_path: Path) -> None:
+    """A developer package may legitimately contain ``server``/``client``."""
+
+    pack = _behavior_pack(tmp_path)
+    server = pack / "server"
+    client = pack / "client"
+    server.mkdir()
+    client.mkdir()
+    (server / "NotifyServer.py").write_text("class NotifyServer(object):\n    pass\n", encoding="utf-8")
+    (client / "NotifyClient.py").write_text("class NotifyClient(object):\n    pass\n", encoding="utf-8")
+    (pack / "main.py").write_text(
+        "from server.NotifyServer import NotifyServer\n"
+        "from client.NotifyClient import NotifyClient\n",
+        encoding="utf-8",
+    )
+
+    assert _code18_errors(tmp_path) == []
+
+
 def test_scan_does_not_apply_python3_map_semantics(tmp_path: Path) -> None:
     pack = _behavior_pack(tmp_path)
     (pack / "map_result.py").write_text(

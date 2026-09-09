@@ -162,13 +162,15 @@ def find_disallowed_imports(
 ) -> list[ImportReference]:
     """Return imports outside the official list and local-module exemption."""
 
-    reserved_roots = {item.split(".", 1)[0] for item in whitelist}
     output: list[ImportReference] = []
     for reference in find_import_references(source):
         if reference.module.startswith(".") or reference.module in whitelist:
             continue
-        root = reference.module.split(".", 1)[0]
-        if reference.module in local_modules and root not in reserved_roots:
+        # An exact module that exists inside this behavior pack is developer
+        # code, even when its top-level name happens to collide with an SDK
+        # namespace such as ``server`` or ``client``.  The old root-name
+        # guard turned these legitimate framework imports into false errors.
+        if reference.module in local_modules:
             continue
         output.append(reference)
     return output
