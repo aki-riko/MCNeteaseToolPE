@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ from prismqml.python.config import (
     SettingEntry,
     SettingsCore,
     Validator,
+    getConfigManager,
 )
 
 from .legacy_pylint_runner import WORKER_COUNT_ENV
@@ -68,6 +70,28 @@ def resolve_prismqml_config_path() -> Path:
     if configured:
         return Path(configured).expanduser()
     return _default_config_root() / APP_CONFIG_DIR_NAME / PRISMQML_CONFIG_FILE_NAME
+
+
+def ensure_mica_default_enabled(config_path: Path) -> bool:
+    """云母效果默认开启；仅在配置从未写过该键时生效一次。
+
+    引擎内置默认值为关闭。首次运行或旧配置缺少 Window/MicaEnabled 时写入
+    True；用户显式选择后(包括关闭)不再覆盖。
+    """
+
+    payload = None
+    try:
+        if config_path.is_file():
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        LOGGER.warning("无法读取引擎配置：%s", config_path, exc_info=True)
+        payload = None
+    window_section = payload.get("Window") if isinstance(payload, dict) else None
+    if isinstance(window_section, dict) and "MicaEnabled" in window_section:
+        return False
+    manager = getConfigManager(str(config_path), persist_appearance=True)
+    manager.setMicaEnabled(True)
+    return True
 
 
 class _StringEntry(SettingEntry):

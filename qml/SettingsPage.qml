@@ -2,6 +2,7 @@
 // 设置页面
 // 自动更新入口:只提供宿主配置并调用引擎门面，使用 PrismQML 默认右下角 Toast。
 import QtQuick
+import QtQuick.Window
 import PrismQML
 
 Item {
@@ -9,6 +10,9 @@ Item {
 
     // AsyncQmlPage 为所有页面统一传入的占位属性 / placeholder accepted by AsyncQmlPage
     property var backend: null
+
+    // 云母效果开关需要直接调用引擎窗口的 QML 方法。
+    readonly property var parentWindow: Window.window
 
     function iconPath(name) {
         return Enums.iconPath + name + ".svg"
@@ -42,7 +46,7 @@ Item {
                     font.bold: true
                 }
                 Label {
-                    text: qsTr("审核性能、自动更新与应用信息。")
+                    text: qsTr("审核性能、外观、窗口与自动更新。")
                     color: Enums.textColor.secondary
                     font.family: Enums.fontFamily
                     font.pixelSize: Enums.typography.caption
@@ -81,6 +85,179 @@ Item {
                             if (backend && !backend.setPython27Workers(Math.round(newValue))) {
                                 workerSpin.setValue(backend.python27Workers)
                             }
+                        }
+                    }
+                }
+            }
+
+            // 外观设置(移植自 PrismQML Gallery):主题与皮肤由引擎即时应用。
+            SettingsCardGroup {
+                width: parent ? parent.width : 0
+                title: qsTr("外观")
+
+                // 应用主题
+                SettingsCard {
+                    readonly property var themeValues:
+                        ConfigManager ? ConfigManager.themeOptions : []
+
+                    objectName: "themeSettingsCard"
+                    width: parent ? parent.width : 0
+                    icon: page.iconPath("DarkTheme")
+                    title: qsTr("应用主题")
+                    content: qsTr("切换浅色 / 深色主题，或跟随系统。")
+                    type: Enums.settingCard.type_combobox
+                    model: [
+                        Translator.tr("gallery_217cfe7db1e3d10a"),
+                        Translator.tr("gallery_aa0819dfc4d8d782"),
+                        Translator.tr("gallery_a6b75d0680322a61")
+                    ]
+                    currentIndex: {
+                        var idx = themeValues.indexOf(
+                            ConfigManager ? ConfigManager.theme : "auto")
+                        return idx >= 0 ? idx : 0
+                    }
+                    onIndexSelected: function(idx) {
+                        if (ConfigManager && idx >= 0 && idx < themeValues.length) {
+                            ConfigManager.setTheme(themeValues[idx])
+                        }
+                    }
+                }
+
+                // 主题色
+                SettingsCard {
+                    objectName: "accentColorSettingsCard"
+                    width: parent ? parent.width : 0
+                    icon: page.iconPath("Color")
+                    title: qsTr("主题色")
+                    content: qsTr("选择默认或自定义颜色。")
+                    type: Enums.settingCard.type_color
+                    defaultColor: Enums.accentDefaults.accent
+                    customColor: ConfigManager
+                                 ? ConfigManager.accentColor
+                                 : Enums.accentColor
+                    useCustomColor: customColor.toString().toLowerCase()
+                                    !== defaultColor.toString().toLowerCase()
+                    defaultColorText: Translator.tr("gallery_af76608af89e9682")
+                    customColorText: Translator.tr("gallery_781b07fdcb56b56a")
+                    chooseColorText: Translator.tr("gallery_369b82fa0700db02")
+                    onCustomColorPicked: function(c) {
+                        if (ConfigManager) {
+                            ConfigManager.setAccentColor(c.toString())
+                        }
+                    }
+                }
+
+                // 设计皮肤
+                SettingsCard {
+                    readonly property var skinValues:
+                        ConfigManager ? ConfigManager.skinOptions : []
+
+                    objectName: "skinSettingsCard"
+                    width: parent ? parent.width : 0
+                    icon: page.iconPath("Color")
+                    title: qsTr("设计皮肤")
+                    content: qsTr("切换应用的设计风格。")
+                    type: Enums.settingCard.type_combobox
+                    model: [
+                        Translator.tr("skin_fluent_design"),
+                        Translator.tr("skin_neobrutalism"),
+                        Translator.tr("skin_vintage_ticket"),
+                        Translator.tr("skin_neumorphism")
+                    ]
+                    currentIndex: {
+                        var idx = skinValues.indexOf(
+                            ConfigManager ? ConfigManager.skin : "fluent")
+                        return idx >= 0 ? idx : 0
+                    }
+                    onIndexSelected: function(idx) {
+                        if (ConfigManager && idx >= 0 && idx < skinValues.length) {
+                            ConfigManager.setSkin(skinValues[idx])
+                        }
+                    }
+                }
+            }
+
+            // 窗口行为(移植自 PrismQML Gallery):DPI 与懒加载重启后生效。
+            SettingsCardGroup {
+                width: parent ? parent.width : 0
+                title: qsTr("窗口")
+
+                // DPI 缩放
+                SettingsCard {
+                    readonly property var dpiValues:
+                        ConfigManager ? ConfigManager.dpiScaleOptions : []
+
+                    objectName: "dpiScaleSettingsCard"
+                    width: parent ? parent.width : 0
+                    icon: page.iconPath("ResizeImage")
+                    title: qsTr("DPI 缩放")
+                    content: qsTr("修改后重启应用生效。")
+                    type: Enums.settingCard.type_combobox
+                    model: dpiValues.map(function(value) {
+                        return value === 0
+                            ? Translator.tr("gallery_217cfe7db1e3d10a")
+                            : value + "%"
+                    })
+                    currentIndex: {
+                        var idx = dpiValues.indexOf(
+                            ConfigManager ? ConfigManager.dpiScale : 0)
+                        return idx >= 0 ? idx : 0
+                    }
+                    onIndexSelected: function(idx) {
+                        if (ConfigManager && idx >= 0 && idx < dpiValues.length) {
+                            ConfigManager.setDpiScale(dpiValues[idx])
+                        }
+                    }
+                }
+
+                // 云母效果
+                SettingsCard {
+                    objectName: "micaSettingsCard"
+                    width: parent ? parent.width : 0
+                    icon: page.iconPath("Blur")
+                    title: qsTr("云母效果")
+                    content: qsTr("Windows 11 窗口云母背景；其他系统不可用。")
+                    type: Enums.settingCard.type_switch
+                    checked: ConfigManager ? ConfigManager.micaEnabled : false
+                    onSwitchToggled: function(isChecked) {
+                        if (page.parentWindow
+                                && page.parentWindow.setMicaEffectEnabled) {
+                            page.parentWindow.setMicaEffectEnabled(isChecked)
+                        }
+                        if (ConfigManager) {
+                            ConfigManager.setMicaEnabled(isChecked)
+                        }
+                    }
+                }
+
+                // DWM 原生阴影
+                SettingsCard {
+                    objectName: "dwmShadowSettingsCard"
+                    width: parent ? parent.width : 0
+                    icon: page.iconPath("SquareShadow")
+                    title: qsTr("DWM 原生阴影")
+                    content: qsTr("Windows 原生窗口阴影。")
+                    type: Enums.settingCard.type_switch
+                    checked: ConfigManager ? ConfigManager.dwmShadow : true
+                    onSwitchToggled: function(isChecked) {
+                        if (ConfigManager) {
+                            ConfigManager.setDwmShadow(isChecked)
+                        }
+                    }
+                }
+
+                // 懒加载
+                SettingsCard {
+                    objectName: "lazyLoadingSettingsCard"
+                    width: parent ? parent.width : 0
+                    icon: page.iconPath("Timer")
+                    title: qsTr("懒加载")
+                    content: qsTr("延迟加载页面内容；修改后重启应用生效。")
+                    type: Enums.settingCard.type_switch
+                    checked: ConfigManager ? ConfigManager.lazyLoading : true
+                    onSwitchToggled: function(isChecked) {
+                        if (ConfigManager) {
+                            ConfigManager.setLazyLoading(isChecked)
                         }
                     }
                 }

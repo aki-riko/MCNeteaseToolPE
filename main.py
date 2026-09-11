@@ -47,6 +47,7 @@ from src.mcp_server_backend import McpServerBackend
 from src.performance_backend import PerformanceBackend
 from src.settings_backend import (
     ApplicationSettingsBackend,
+    ensure_mica_default_enabled,
     resolve_prismqml_config_path,
 )
 
@@ -208,7 +209,7 @@ def main() -> int:
     if cli_status is not None:
         return cli_status
 
-    # 0.4.2.7 的 FastSplash 在 App 创建阶段读取 display name，提前发布品牌信息。
+    # 0.4.2.24 的 FastSplash 在 App 创建阶段读取 display name，提前发布品牌信息。
     App.setApplicationDisplayName(APP_TITLE)
     app = App(
         application_icon=_APP_ICON,
@@ -219,6 +220,8 @@ def main() -> int:
         persist_appearance=True,
     )
     app.enable_auto_update(UPDATE_REPO, APP_VERSION, UPDATE_ASSET_KEYWORD)
+    # 引擎默认关闭云母；首次运行(或旧配置未写过该键)时默认开启。
+    ensure_mica_default_enabled(resolve_prismqml_config_path())
     # Python 引擎只自动注入 appUpdater；安装参数属于应用配置，由宿主显式提供。
     app.engine.rootContext().setContextProperty("appInstallerSilentArgs", INSTALLER_SILENT_ARGS)
     app.engine.rootContext().setContextProperty("appProjectHomepage", PROJECT_HOMEPAGE)
