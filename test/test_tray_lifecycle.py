@@ -12,9 +12,13 @@ import main
 class _FakeEvent:
     def __init__(self) -> None:
         self.ignored = False
+        self.hide_on_close = False
 
     def ignore(self) -> None:
         self.ignored = True
+
+    def requestHideOnClose(self) -> None:
+        self.hide_on_close = True
 
 
 class _FakeWindow:
@@ -92,6 +96,7 @@ class _FakeSplashWindow:
 
 
 def test_close_request_hides_window_when_tray_is_visible() -> None:
+    """有可见托盘时关闭请求转交引擎: 播完关闭动画后由引擎隐藏, 不直接调 hide。"""
     window = _FakeWindow()
     tray_icon = _FakeTray()
     tray_icon.show()
@@ -100,8 +105,9 @@ def test_close_request_hides_window_when_tray_is_visible() -> None:
     handled = main._move_close_request_to_tray(window, tray_icon, event)
 
     assert handled is True
-    assert window.calls == ["hide"]
-    assert event.ignored is True
+    assert window.calls == []
+    assert event.hide_on_close is True
+    assert event.ignored is False
 
 
 def test_close_request_is_not_intercepted_without_visible_tray() -> None:

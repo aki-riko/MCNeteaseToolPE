@@ -71,8 +71,9 @@ def _move_close_request_to_tray(
 
     if tray_icon is None or not tray_icon.isVisible():
         return False
-    window.hide()
-    event.ignore()
+    # 请求引擎播完关闭动画后隐藏, 而不是窗口直接消失。
+    # 由引擎在动画收尾时执行隐藏, 这里不能提前调 window.hide()。
+    event.requestHideOnClose()
     return True
 
 
