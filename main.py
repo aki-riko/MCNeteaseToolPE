@@ -282,9 +282,6 @@ def main() -> int:
     # 托盘必须在主窗口可关闭前完成装配，避免关闭后留下无入口的后台进程。
     _enable_system_tray(app, win)
     win.show()
-    # 空闲预热其余分页: 首次点击时 QML 已就绪, 不在 GUI 线程现场创建造成卡顿。
-    for page_index in range(1, win.pageCount()):
-        win.prewarmPage(page_index)
     return app.exec()
 
 
