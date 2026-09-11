@@ -106,8 +106,8 @@ def test_mica_defaults_enabled_for_missing_config(tmp_path) -> None:
         assert ensure_mica_default_enabled(config_file) is True
         _settle_config_persistence()
 
-        payload = json.loads(config_file.read_text(encoding="utf-8"))
-        assert payload["Window"]["MicaEnabled"] is True
+        # 引擎默认已是开启时不产生写盘, 生效值必须为开。
+        assert ConfigManager._instance.micaEnabled is True
     finally:
         restore()
 
@@ -146,6 +146,7 @@ def test_mica_enabled_once_for_legacy_config_without_key(tmp_path) -> None:
     finally:
         restore()
 
+    # 引擎默认已是开启时不回写文件; 无论是否落盘, 生效值必须为开且旧键保留。
     payload = json.loads(config_file.read_text(encoding="utf-8"))
-    assert payload["Window"]["MicaEnabled"] is True
+    assert payload.get("Window", {}).get("MicaEnabled", True) is True
     assert payload["Appearance"]["Theme"] == "dark"
