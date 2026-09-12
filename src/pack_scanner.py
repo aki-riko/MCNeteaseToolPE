@@ -43,6 +43,7 @@ JUNK_DIR_NAMES = (
 JUNK_FILE_NAMES = (".DS_Store", "Thumbs.db", "desktop.ini")
 JUNK_FILE_SUFFIXES = (".pyc", ".pyo", ".log", ".tmp", ".bak")
 REPEATED_NAME = re.compile(r"(.)\1{5,}")
+_UTF8_BOM = b"\xef\xbb\xbf"
 
 
 @dataclass(frozen=True)
@@ -489,6 +490,9 @@ def _check_json_encoding(
         rel = _relative(root, path)
         raw = _read_bytes(path)
         if raw is not None:
+            if raw.startswith(_UTF8_BOM):
+                output.append(_issue(40, "error", "json 带 UTF-8 BOM,网易打包器会报 invalid json data",
+                                     "文件以 EF BB BF 开头,需以无 BOM 的 UTF-8 保存", rel))
             try:
                 text = raw.decode("utf-8-sig")
             except UnicodeDecodeError:
