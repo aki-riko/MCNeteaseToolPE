@@ -11,6 +11,7 @@ Item {
 
     property var backend: null
     property string projectDir: ""
+    property bool syncingProjectPath: false
     property var repairState: backend ? (backend.state || {}) : ({})
     readonly property bool busy: backend ? backend.busy === true : false
     readonly property bool canUndo: backend ? backend.canUndo === true : false
@@ -18,6 +19,7 @@ Item {
     readonly property int repairableCount: Number(repairState.repairableCount || 0)
     readonly property int auditErrorCount: Number(repairState.auditErrorCount || 0)
     readonly property int auditWarningCount: Number(repairState.auditWarningCount || 0)
+    readonly property bool fromProjectWorkflow: repairState.source === "projectWorkflow"
 
     function urlToPath(url) {
         var path = url.toString()
@@ -27,6 +29,15 @@ Item {
 
     function inspectProject() {
         if (backend && projectDir !== "") backend.inspect(projectDir)
+    }
+
+    function syncBackendProjectPath() {
+        if (!backend) return
+        var path = String(backend.projectPath || "")
+        if (path === "" || path === projectDir) return
+        syncingProjectPath = true
+        projectDir = path
+        syncingProjectPath = false
     }
 
     function confirmRepair(item) {
@@ -40,8 +51,10 @@ Item {
     }
 
     onProjectDirChanged: {
-        if (backend) backend.reset()
+        if (backend && !syncingProjectPath) backend.reset()
     }
+    onBackendChanged: syncBackendProjectPath()
+    Component.onCompleted: syncBackendProjectPath()
 
     FolderDialog {
         id: folderDialog
@@ -58,6 +71,14 @@ Item {
             resultToast.show(
                         String(result.message),
                         result.success === true ? "success" : "error")
+        }
+
+        function onProjectPathChanged() {
+            root.syncBackendProjectPath()
+        }
+
+        function onAuditResultAdopted(_projectPath) {
+            root.syncBackendProjectPath()
         }
     }
 
@@ -102,7 +123,7 @@ Item {
 
                 Label {
                     width: parent ? parent.width : 0
-                    text: qsTr("先检查，再逐项确认修复。代码、未知编码、路径重命名和无法确定的兼容性问题只会保留定位，不会擅自修改。")
+                    text: qsTr("工程处理审核失败时会自动带入真实阻塞项；也可手动检查工程。代码、未知编码、路径重命名和无法确定的兼容性问题只会保留定位，不会擅自修改。")
                     color: Enums.textColor.secondary
                     font.family: Enums.fontFamily
                     font.pixelSize: Enums.typography.caption
@@ -176,7 +197,9 @@ Item {
                         }
                         Label {
                             Layout.fillWidth: true
-                            text: qsTr("检查过程不会写入工程；修复按钮只在可验证的项目上显示。")
+                            text: root.fromProjectWorkflow
+                                  ? qsTr("已接收工程处理的真实审核结果；修复候选只会基于该工程当前状态生成。")
+                                  : qsTr("检查过程不会写入工程；修复按钮只在可验证的项目上显示。")
                             color: Enums.textColor.secondary
                             font.family: Enums.fontFamily
                             font.pixelSize: Enums.typography.caption
@@ -186,7 +209,7 @@ Item {
 
                     Button {
                         objectName: "blockingRepairInspectButton"
-                        text: qsTr("检查")
+                        text: root.fromProjectWorkflow ? qsTr("重新检查") : qsTr("检查")
                         loading: root.busy
                         style: Enums.button.style_primary
                         enabled: root.projectDir !== "" && !root.busy
@@ -228,6 +251,16 @@ Item {
                             font.pixelSize: Enums.typography.caption
                             wrapMode: Text.NoWrap
                             elide: Text.ElideMiddle
+                        }
+                        Label {
+                            objectName: "blockingRepairWorkflowSourceLabel"
+                            Layout.fillWidth: true
+                            visible: root.fromProjectWorkflow
+                            text: qsTr("来自最近一次工程处理审核")
+                            color: Enums.statusLevel.infoColor
+                            font.family: Enums.fontFamily
+                            font.pixelSize: Enums.typography.caption
+                            wrapMode: Text.WordWrap
                         }
                         Label {
                             Layout.fillWidth: true

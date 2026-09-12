@@ -21,6 +21,9 @@ def test_blocking_repair_is_a_separate_top_level_page() -> None:
     assert "from src.blocking_repair_backend import BlockingRepairBackend" in main_source
     assert 'blocking_repair_backend = BlockingRepairBackend()' in main_source
     assert '_page_factory("BlockingRepairPage.qml", blocking_repair_backend)' in main_source
+    assert "blocking_repair_page_index = win.addPage(" in main_source
+    assert "project_backend.blockingIssuesReady.connect(" in main_source
+    assert "_route_project_blockers(" in main_source
     assert '"阻塞项修复"' in main_source
     for contract in (
         'objectName: "blockingRepairPage"',
@@ -33,6 +36,11 @@ def test_blocking_repair_is_a_separate_top_level_page() -> None:
         'objectName: "blockingRepairGuidance_" + index',
         "repairDialog.repairDestructive = item.destructive === true",
         'objectName: "blockingRepairUndoButton"',
+        'objectName: "blockingRepairWorkflowSourceLabel"',
+        "function syncBackendProjectPath()",
+        "function onProjectPathChanged()",
+        "function onAuditResultAdopted(_projectPath)",
+        'qsTr("来自最近一次工程处理审核")',
         'backend.undoLastRemoval()',
         'qsTr("隔离清理")',
         'qsTr("处理建议：%1")',
@@ -68,6 +76,7 @@ backend = BlockingRepairBackend()
 backend._state = {{
     'phase': 'ready',
     'rootPath': r'{REPO_ROOT}',
+    'source': 'projectWorkflow',
     'message': '已发现 2 项可自动优化项；执行后会自动复审。',
     'repairableCount': 2,
     'auditErrorCount': 1,
@@ -99,6 +108,7 @@ backend._state = {{
     }}],
     'blockingPreviewTruncated': False,
 }}
+backend._project_path = r'{REPO_ROOT}'
 page.setProperty('backend', backend)
 window = QQuickWindow()
 window.resize(1180, 840)
@@ -107,6 +117,7 @@ page.setWidth(1180)
 page.setHeight(840)
 window.show()
 backend.stateChanged.emit()
+backend.projectPathChanged.emit()
 app.processEvents()
 
 def find_quick_item(parent, name):
@@ -124,6 +135,7 @@ for name in (
     'blockingRepairSummaryCard',
     'blockingRepairItemsCard',
     'blockingRepairRemainingCard',
+    'blockingRepairWorkflowSourceLabel',
     'blockingRepairConfirmDialog',
 ):
     assert page.findChild(QObject, name) is not None, name
@@ -147,6 +159,10 @@ assert repair_badge.property('text') == '可修复'
 assert cleanup_badge.property('text') == '隔离清理'
 assert guidance.property('visible') is True
 assert guidance.property('text') == '处理建议：根据目标游戏版本补充该字段。'
+assert page.property('projectDir') == r'{REPO_ROOT}'
+workflow_source = page.findChild(QObject, 'blockingRepairWorkflowSourceLabel')
+assert workflow_source.property('visible') is True
+assert workflow_source.property('text') == '来自最近一次工程处理审核'
 
 dialog = page.findChild(QObject, 'blockingRepairConfirmDialog')
 expression = QQmlExpression(

@@ -41,6 +41,7 @@ class ProjectBackend(QObject):
     progressChanged = Signal()
     archivePathChanged = Signal()
     recentProjectPathChanged = Signal()
+    blockingIssuesReady = Signal(str, list)
     finished = Signal(bool, int, int, list, str)
 
     def __init__(
@@ -328,6 +329,7 @@ class ProjectBackend(QObject):
         self._set_state("done", status, PIPELINE_PROGRESS_END)
         self._set_busy(False)
         self.logMessage.emit(status, "error")
+        self.blockingIssuesReady.emit(self._project_dir, list(issues))
         self.finished.emit(passed, errors, warnings, issues, status)
 
     @Slot(int, int)

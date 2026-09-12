@@ -145,6 +145,47 @@ def test_repair_rejects_stale_comment_plan_without_overwriting_new_content(
     assert manifest.read_text(encoding="utf-8") == replacement
 
 
+def test_project_audit_result_is_adopted_without_rescanning_the_same_project(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    behavior = tmp_path / "behavior_pack"
+    manifest = _write_manifest(behavior, "data")
+    issues = [
+        {
+            "code": 37,
+            "codeName": "ManifestJsonError",
+            "severity": "error",
+            "title": "manifest 缺 min_engine_version",
+            "detail": "来自工程处理的真实失败结果",
+            "path": str(manifest),
+        },
+        {
+            "code": 41,
+            "codeName": "PerformanceRiskWarning",
+            "severity": "warning",
+            "title": "性能风险",
+            "detail": "真实警告",
+            "path": str(manifest),
+        },
+    ]
+    service = BlockingRepairService()
+
+    monkeypatch.setattr(
+        "src.blocking_repair.scan",
+        lambda *_args, **_kwargs: pytest.fail("不应重新扫描工程审核"),
+    )
+    state = service.inspect_from_audit(str(tmp_path), issues)
+
+    assert state["source"] == "projectWorkflow"
+    assert state["rootPath"] == str(tmp_path.resolve())
+    assert state["auditErrorCount"] == 1
+    assert state["auditWarningCount"] == 1
+    assert state["blockingPreview"][0]["detail"] == "来自工程处理的真实失败结果"
+    assert state["blockingPreview"][0]["path"] == "behavior_pack/manifest.json"
+    assert state["blockingPreview"][0]["guidance"]
+
+
 def test_qml_backend_dispatches_inspection_and_writes_to_background_pool(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -188,6 +229,25 @@ def test_qml_backend_dispatches_inspection_and_writes_to_background_pool(
     assert (behavior / "entities").is_dir()
     assert backend.state["repairableCount"] == 0
     assert results[-1]["success"] is True
+
+    adopted: list[str] = []
+    backend.auditResultAdopted.connect(adopted.append)
+    issues = [
+        {
+            "code": 37,
+            "codeName": "ManifestJsonError",
+            "severity": "error",
+            "title": "manifest 缺 min_engine_version",
+            "detail": "工程处理失败",
+            "path": str(behavior / "manifest.json"),
+        }
+    ]
+    backend.adoptAuditResult(str(tmp_path), issues)
+
+    assert len(calls) == 3
+    assert backend.projectPath == str(tmp_path.resolve())
+    assert backend.state["source"] == "projectWorkflow"
+    assert adopted == [str(tmp_path.resolve())]
 
 
 def test_qml_backend_undoes_the_last_isolated_cleanup_in_background_pool(

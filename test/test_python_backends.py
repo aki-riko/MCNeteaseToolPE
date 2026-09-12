@@ -334,11 +334,18 @@ def test_project_backend_windows_reveal_selects_archive(
 
 def test_project_backend_stops_before_uuid_and_package_when_audit_fails(tmp_path: Path) -> None:
     calls: list[str] = []
+    issues = [
+        {
+            "code": 37,
+            "severity": "error",
+            "title": "manifest 缺 min_engine_version",
+        }
+    ]
 
     class _FailingAuditBackend(_FakeAuditBackend):
         def audit(self, project_dir: str) -> None:
             self._calls.append("audit")
-            self.finished.emit(False, 1, 0, [{"severity": "error"}])
+            self.finished.emit(False, 1, 0, issues)
 
     backend = ProjectBackend(
         uuid_backend=_FakeUuidBackend(calls),
@@ -346,12 +353,17 @@ def test_project_backend_stops_before_uuid_and_package_when_audit_fails(tmp_path
         audit_backend=_FailingAuditBackend(calls),
         package_backend=_FakePackageBackend(calls),
     )
+    delivered: list[tuple[str, list[dict[str, object]]]] = []
+    backend.blockingIssuesReady.connect(
+        lambda project_dir, payload: delivered.append((project_dir, payload))
+    )
 
     backend.run(str(tmp_path))
 
     assert calls == ["cleanup", "audit"]
     assert backend.phase == "done"
     assert backend.busy is False
+    assert delivered == [(str(tmp_path.resolve()), issues)]
 
 
 def test_project_backend_stops_after_uuid_failure(tmp_path: Path) -> None:

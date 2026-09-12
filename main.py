@@ -178,6 +178,19 @@ def _page_factory(name, backend=None):
     return lambda: AsyncQmlPage(path, backend=backend)
 
 
+def _route_project_blockers(
+    window: Window,
+    repair_backend: BlockingRepairBackend,
+    repair_page_index: int,
+    project_dir: str,
+    issues: list[dict[str, object]],
+) -> None:
+    """将同一次工程审核的真实阻塞项同步到修复页并异步切页。"""
+
+    repair_backend.adoptAuditResult(project_dir, issues)
+    window.setCurrentIndex(repair_page_index)
+
+
 def _notify_audit_finished(
     passed: bool,
     errors: int,
@@ -248,11 +261,21 @@ def main() -> int:
         "工程处理",
         position="top",
     )
-    win.addPage(
+    blocking_repair_page_index = win.addPage(
         _page_factory("BlockingRepairPage.qml", blocking_repair_backend),
         "WrenchScrewdriver",
         "阻塞项修复",
         position="top",
+    )
+
+    project_backend.blockingIssuesReady.connect(
+        lambda project_dir, issues: _route_project_blockers(
+            win,
+            blocking_repair_backend,
+            blocking_repair_page_index,
+            project_dir,
+            issues,
+        )
     )
     win.addPage(
         _page_factory("LevelDatPage.qml", level_dat_backend),

@@ -84,6 +84,7 @@ def empty_repair_state(message: str = "选择工程目录后即可检查可自�
     return {
         "phase": "idle",
         "rootPath": "",
+        "source": "",
         "message": message,
         "repairableCount": 0,
         "auditErrorCount": 0,
@@ -240,14 +241,25 @@ def _display_issue_path(root: Path, value: object) -> str:
 
 
 def _blocking_preview(root: Path) -> tuple[int, int, list[dict[str, object]]]:
-    issues = scan(str(root))
-    errors = [issue for issue in issues if issue.severity == "error"]
-    warnings = sum(1 for issue in issues if issue.severity == "warning")
+    return _blocking_preview_from_issues(root, [issue.as_dict() for issue in scan(str(root))])
+
+
+def _blocking_preview_from_issues(
+    root: Path,
+    issues: list[dict[str, object]],
+) -> tuple[int, int, list[dict[str, object]]]:
+    errors = [issue for issue in issues if issue.get("severity") == "error"]
+    warnings = sum(1 for issue in issues if issue.get("severity") == "warning")
     preview: list[dict[str, object]] = []
     for issue in errors[:BLOCKING_ISSUE_PREVIEW_LIMIT]:
-        item = issue.as_dict()
+        item = dict(issue)
         item["path"] = _display_issue_path(root, item.get("path"))
-        item["guidance"] = issue_guidance(issue.code, issue.title)
+        code = item.get("code")
+        title = item.get("title")
+        item["guidance"] = issue_guidance(
+            code if isinstance(code, int) else -1,
+            title if isinstance(title, str) else "",
+        )
         preview.append(item)
     return len(errors), warnings, preview
 
@@ -263,9 +275,22 @@ def _inspection_message(repair_count: int, error_count: int) -> str:
 def _build_state(root: Path) -> dict[str, object]:
     candidates = discover_repairs(str(root))
     error_count, warning_count, preview = _blocking_preview(root)
+    return _state_from_summary(root, candidates, error_count, warning_count, preview)
+
+
+def _state_from_summary(
+    root: Path,
+    candidates: list[RepairCandidate],
+    error_count: int,
+    warning_count: int,
+    preview: list[dict[str, object]],
+    *,
+    source: str = "manual",
+) -> dict[str, object]:
     return {
         "phase": "ready",
         "rootPath": str(root),
+        "source": source,
         "message": _inspection_message(len(candidates), error_count),
         "repairableCount": len(candidates),
         "auditErrorCount": error_count,
@@ -313,6 +338,24 @@ class BlockingRepairService:
     @staticmethod
     def inspect(project_dir: str) -> dict[str, object]:
         return _build_state(_project_root(project_dir))
+
+    @staticmethod
+    def inspect_from_audit(
+        project_dir: str,
+        issues: list[dict[str, object]],
+    ) -> dict[str, object]:
+        root = _project_root(project_dir)
+        normalized = [dict(item) for item in issues if isinstance(item, dict)]
+        candidates = discover_repairs(str(root))
+        errors, warnings, preview = _blocking_preview_from_issues(root, normalized)
+        return _state_from_summary(
+            root,
+            candidates,
+            errors,
+            warnings,
+            preview,
+            source="projectWorkflow",
+        )
 
     @staticmethod
     def apply_and_inspect(
