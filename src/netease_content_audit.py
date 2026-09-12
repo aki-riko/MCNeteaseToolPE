@@ -21,7 +21,7 @@ from .config import (
     LEVEL_DAT_MAX_DEPTH,
 )
 from .level_dat import LevelDatParseError, NbtList, NbtTag, parse_level_dat
-from .image_audit_utils import image_dimensions, png_has_invalid_transparent_pixels
+from .image_audit_utils import image_dimensions, png_transparent_pixel_status
 
 
 INT32_MIN = -2_147_483_648
@@ -561,16 +561,27 @@ def check_glyphs(root: Path) -> list[ContentFinding]:
                 _finding(root, path, 34, "error", "位图字体尺寸必须为256x256", str(dimensions or "无法读取"))
             )
             continue
-        invalid_transparency = png_has_invalid_transparent_pixels(path)
-        if invalid_transparency is True:
+        transparency_status = png_transparent_pixel_status(path)
+        if transparency_status == "invalid":
             findings.append(
                 _finding(
                     root,
                     path,
                     34,
                     "error",
-                    "位图字体透明像素的 RGBA 必须全部为0",
-                    "发现透明像素保留了非零 RGB，或图片不是8位 RGBA PNG",
+                    "位图字体全透明像素的 RGB 未归零",
+                    "图片是8位 RGBA PNG；仅完全透明像素保留了非零 RGB",
+                )
+            )
+        elif transparency_status in {"unsupported", None}:
+            findings.append(
+                _finding(
+                    root,
+                    path,
+                    34,
+                    "error",
+                    "位图字体必须是8位 RGBA PNG",
+                    "无法按8位 RGBA PNG 解码透明像素",
                 )
             )
     return findings

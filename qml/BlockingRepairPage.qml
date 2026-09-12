@@ -13,6 +13,7 @@ Item {
     property string projectDir: ""
     property var repairState: backend ? (backend.state || {}) : ({})
     readonly property bool busy: backend ? backend.busy === true : false
+    readonly property bool canUndo: backend ? backend.canUndo === true : false
     readonly property bool hasInspection: repairState.rootPath !== ""
     readonly property int repairableCount: Number(repairState.repairableCount || 0)
     readonly property int auditErrorCount: Number(repairState.auditErrorCount || 0)
@@ -33,6 +34,8 @@ Item {
         repairDialog.repairId = String(item.id)
         repairDialog.repairTitle = String(item.title || "")
         repairDialog.repairChange = String(item.change || "")
+        repairDialog.repairDestructive = item.destructive === true
+        repairDialog.repairImpact = String(item.impact || "")
         repairDialog.open()
     }
 
@@ -93,13 +96,13 @@ Item {
                     HintIcon {
                         anchors.verticalCenter: parent.verticalCenter
                         iconSize: Enums.iconSize.m
-                        toolTipText: qsTr("仅处理能从工程内容确定、不会修改代码或玩法的非代码问题。每项写入需要确认，完成后自动复审。")
+                        toolTipText: qsTr("仅处理能从工程内容确定的非代码问题。每项写入的影响会在确认前明确展示，完成后自动复审。")
                     }
                 }
 
                 Label {
                     width: parent ? parent.width : 0
-                    text: qsTr("先检查，再逐项确认修复。代码、未知编码、路径重命名和版本兼容性问题只会保留定位，不会擅自修改。")
+                    text: qsTr("先检查，再逐项确认修复。代码、未知编码、路径重命名和无法确定的兼容性问题只会保留定位，不会擅自修改。")
                     color: Enums.textColor.secondary
                     font.family: Enums.fontFamily
                     font.pixelSize: Enums.typography.caption
@@ -189,6 +192,17 @@ Item {
                         enabled: root.projectDir !== "" && !root.busy
                         onClicked: root.inspectProject()
                     }
+
+                    Button {
+                        objectName: "blockingRepairUndoButton"
+                        visible: root.canUndo
+                        text: qsTr("撤销上次清理")
+                        style: Enums.button.style_default
+                        enabled: !root.busy
+                        onClicked: {
+                            if (root.backend) root.backend.undoLastRemoval()
+                        }
+                    }
                 }
             }
 
@@ -274,8 +288,12 @@ Item {
                                 RowLayout {
                                     spacing: Enums.spacing.s
                                     Badge {
-                                        text: qsTr("可修复")
-                                        level: Enums.statusLevel.success
+                                        objectName: "blockingRepairActionBadge_" + modelData.id
+                                        text: modelData.destructive === true
+                                              ? qsTr("隔离清理") : qsTr("可修复")
+                                        level: modelData.destructive === true
+                                               ? Enums.statusLevel.warning
+                                               : Enums.statusLevel.success
                                     }
                                     Label {
                                         text: modelData.title || ""
@@ -302,12 +320,25 @@ Item {
                                     font.pixelSize: Enums.typography.caption
                                     wrapMode: Text.WrapAnywhere
                                 }
+                                Label {
+                                    Layout.fillWidth: true
+                                    visible: String(modelData.impact || "") !== ""
+                                    text: qsTr("影响：%1").arg(modelData.impact || "")
+                                    color: Enums.statusLevel.warningColor
+                                    font.family: Enums.fontFamily
+                                    font.pixelSize: Enums.typography.caption
+                                    wrapMode: Text.WordWrap
+                                }
                             }
 
                             Button {
                                 objectName: "blockingRepairApplyButton_" + modelData.id
-                                text: qsTr("修复")
+                                text: modelData.destructive === true
+                                      ? qsTr("隔离清理") : qsTr("修复")
                                 style: Enums.button.style_filled
+                                level: modelData.destructive === true
+                                       ? Enums.statusLevel.warning
+                                       : Enums.statusLevel.info
                                 enabled: !root.busy
                                 onClicked: root.confirmRepair(modelData)
                             }
@@ -346,6 +377,7 @@ Item {
                         model: root.repairState.blockingPreview || []
 
                         delegate: Column {
+                            required property int index
                             required property var modelData
                             width: parent ? parent.width : 0
                             spacing: Enums.spacing.xxs
@@ -368,6 +400,16 @@ Item {
                                 font.family: Enums.fontFamily
                                 font.pixelSize: Enums.typography.caption
                                 wrapMode: Text.WrapAnywhere
+                            }
+                            Label {
+                                objectName: "blockingRepairGuidance_" + index
+                                width: parent ? parent.width : 0
+                                visible: String(modelData.guidance || "") !== ""
+                                text: qsTr("处理建议：%1").arg(modelData.guidance || "")
+                                color: Enums.textColor.primary
+                                font.family: Enums.fontFamily
+                                font.pixelSize: Enums.typography.caption
+                                wrapMode: Text.WordWrap
                             }
                         }
                     }
@@ -404,12 +446,18 @@ Item {
         property string repairId: ""
         property string repairTitle: ""
         property string repairChange: ""
-        level: Enums.statusLevel.warning
-        title: qsTr("确认修复")
+        property string repairImpact: ""
+        property bool repairDestructive: false
+        level: repairDestructive ? Enums.statusLevel.warning
+                                 : Enums.statusLevel.warning
+        title: repairDestructive ? qsTr("确认隔离清理") : qsTr("确认修复")
         message: repairTitle + "\n\n" + repairChange
-                 + qsTr("\n\n执行后将立即重新审核工程。")
+                 + (repairImpact === "" ? "" : qsTr("\n\n影响：%1").arg(repairImpact))
+                 + (repairDestructive
+                    ? qsTr("\n\n此操作会将对应文件或目录移入工程外隔离区，可在本页撤销上次清理。执行后将立即重新审核工程。")
+                    : qsTr("\n\n执行后将立即重新审核工程。"))
         messageAlignment: Text.AlignLeft
-        confirmText: qsTr("执行修复")
+        confirmText: repairDestructive ? qsTr("隔离清理") : qsTr("执行修复")
         cancelText: qsTr("取消")
         onConfirmed: {
             if (root.backend && repairId !== "") root.backend.applyRepair(repairId)

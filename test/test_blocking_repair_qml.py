@@ -29,6 +29,13 @@ def test_blocking_repair_is_a_separate_top_level_page() -> None:
         'objectName: "blockingRepairRemainingCard"',
         'objectName: "blockingRepairConfirmDialog"',
         'objectName: "blockingRepairApplyButton_" + modelData.id',
+        'objectName: "blockingRepairActionBadge_" + modelData.id',
+        'objectName: "blockingRepairGuidance_" + index',
+        "repairDialog.repairDestructive = item.destructive === true",
+        'objectName: "blockingRepairUndoButton"',
+        'backend.undoLastRemoval()',
+        'qsTr("隔离清理")',
+        'qsTr("处理建议：%1")',
         "backend.applyRepair(repairId)",
         "完成后自动复审",
     ):
@@ -41,8 +48,8 @@ import os
 import sys
 sys.path.insert(0, r'{REPO_ROOT}')
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-from PySide6.QtCore import QObject, QUrl
-from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+from PySide6.QtCore import QMetaObject, QObject, QUrl
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QQmlExpression
 from PySide6.QtQuick import QQuickItem, QQuickWindow
 from PySide6.QtWidgets import QApplication
 from prismqml import register_types
@@ -61,8 +68,8 @@ backend = BlockingRepairBackend()
 backend._state = {{
     'phase': 'ready',
     'rootPath': r'{REPO_ROOT}',
-    'message': '已发现 1 项可自动优化项；执行后会自动复审。',
-    'repairableCount': 1,
+    'message': '已发现 2 项可自动优化项；执行后会自动复审。',
+    'repairableCount': 2,
     'auditErrorCount': 1,
     'auditWarningCount': 0,
     'items': [{{
@@ -72,12 +79,23 @@ backend._state = {{
         'detail': '缺少 entities。',
         'change': '新增空目录 entities。',
         'path': 'behavior_pack/entities',
+        'destructive': False,
+    }}, {{
+        'id': 'preview-cleanup',
+        'kind': 'remove_generated_artifact',
+        'title': '清理生成物',
+        'detail': '发现不应提交的生成物。',
+        'change': '移入工程外隔离区。',
+        'path': 'behavior_pack/.cache',
+        'destructive': True,
+        'impact': '可在本页撤销。',
     }}],
     'blockingPreview': [{{
         'codeName': 'ManifestJsonError',
         'title': 'manifest 缺 min_engine_version',
         'detail': '需人工确认版本。',
         'path': 'behavior_pack/manifest.json',
+        'guidance': '根据目标游戏版本补充该字段。',
     }}],
     'blockingPreviewTruncated': False,
 }}
@@ -91,6 +109,15 @@ window.show()
 backend.stateChanged.emit()
 app.processEvents()
 
+def find_quick_item(parent, name):
+    if parent.objectName() == name:
+        return parent
+    for child in parent.childItems():
+        found = find_quick_item(child, name)
+        if found is not None:
+            return found
+    return None
+
 for name in (
     'blockingRepairProjectCard',
     'blockingRepairInspectButton',
@@ -100,6 +127,44 @@ for name in (
     'blockingRepairConfirmDialog',
 ):
     assert page.findChild(QObject, name) is not None, name
+
+repair_button = find_quick_item(page, 'blockingRepairApplyButton_preview-repair')
+cleanup_button = find_quick_item(page, 'blockingRepairApplyButton_preview-cleanup')
+repair_badge = find_quick_item(page, 'blockingRepairActionBadge_preview-repair')
+cleanup_badge = find_quick_item(page, 'blockingRepairActionBadge_preview-cleanup')
+guidance = find_quick_item(page, 'blockingRepairGuidance_0')
+for name, item in (
+    ('blockingRepairApplyButton_preview-repair', repair_button),
+    ('blockingRepairApplyButton_preview-cleanup', cleanup_button),
+    ('blockingRepairActionBadge_preview-repair', repair_badge),
+    ('blockingRepairActionBadge_preview-cleanup', cleanup_badge),
+    ('blockingRepairGuidance_0', guidance),
+):
+    assert item is not None, name
+assert repair_button.property('text') == '修复'
+assert cleanup_button.property('text') == '隔离清理'
+assert repair_badge.property('text') == '可修复'
+assert cleanup_badge.property('text') == '隔离清理'
+assert guidance.property('visible') is True
+assert guidance.property('text') == '处理建议：根据目标游戏版本补充该字段。'
+
+dialog = page.findChild(QObject, 'blockingRepairConfirmDialog')
+expression = QQmlExpression(
+    engine.rootContext(), page,
+    "confirmRepair({{id: 'preview-cleanup', title: '清理生成物', "
+    "change: '移入工程外隔离区。', impact: '可在本页撤销。', destructive: true}})"
+)
+expression.evaluate()
+assert not expression.hasError(), expression.error().toString()
+app.processEvents()
+assert dialog.property('repairDestructive') is True
+assert dialog.property('title') == '确认隔离清理'
+assert dialog.property('confirmText') == '隔离清理'
+assert dialog.property('repairImpact') == '可在本页撤销。'
+assert '工程外隔离区' in dialog.property('message')
+assert '可在本页撤销' in dialog.property('message')
+assert QMetaObject.invokeMethod(dialog, 'reject')
+
 image = window.grabWindow()
 assert not image.isNull()
 assert image.width() == 1180 and image.height() == 840

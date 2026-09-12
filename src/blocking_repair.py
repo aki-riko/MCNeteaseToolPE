@@ -11,13 +11,30 @@ import os
 from pathlib import Path
 import tempfile
 
-from .pack_scanner import _strip_json_comments, scan
+from .pack_scanner import scan
 
 
 REPAIR_CREATE_REQUIRED_DIRECTORY = "create_required_directory"
+REPAIR_CLEAR_LEVEL_READONLY = "clear_level_readonly"
+REPAIR_FIX_PLAYER_CONTROLLERS = "fix_player_controllers"
+REPAIR_MOVE_PACK_LAYOUT = "move_pack_layout"
+REPAIR_NORMALIZE_GLYPH_TRANSPARENCY = "normalize_glyph_transparency"
 REPAIR_NORMALIZE_MANIFEST_COMMENTS = "normalize_manifest_comments"
+REPAIR_NORMALIZE_JSON_BOM = "normalize_json_bom"
+REPAIR_REMOVE_SAFE_RESIDUE = "remove_safe_residue"
 REPAIR_RENAME_RESOURCE_ENTITIES = "rename_resource_entities"
+REPAIR_SET_MIN_ENGINE_VERSION = "set_min_engine_version"
 BLOCKING_ISSUE_PREVIEW_LIMIT = 8
+NON_CODE_ERROR_CODES = frozenset(
+    {0, 6, 10, 12, 13, 16, 20, 23, 24, 25, 26, 27, 29, 30, 31, 33, 34, 36, 37, 38, 40}
+)
+NON_CODE_ERROR_TITLES = frozenset(
+    {
+        (18, "工程包含编辑信息"),
+        (35, "命名含 5 个以上连续相同字符"),
+    }
+)
+KNOWN_AUDIT_ERROR_CODES = NON_CODE_ERROR_CODES | frozenset({18, 35})
 
 _BEHAVIOR_MODULE_TYPES = frozenset({"data", "client_data", "javascript"})
 _RESOURCE_MODULE_TYPE = "resources"
@@ -37,6 +54,8 @@ class RepairCandidate:
     source_path: Path
     target_path: Path
     source_digest: str = ""
+    destructive: bool = False
+    impact: str = ""
 
     def as_dict(self, root: Path) -> dict[str, str]:
         return {
@@ -46,7 +65,17 @@ class RepairCandidate:
             "detail": self.detail,
             "change": self.change,
             "path": _relative(root, self.display_path),
+            "destructive": self.destructive,
+            "impact": self.impact,
         }
+
+
+@dataclass(frozen=True)
+class RepairApplyResult:
+    """一次修复写入后的变更与可选撤销信息。"""
+
+    changed_paths: list[Path]
+    undo: dict[str, str] | None = None
 
 
 def empty_repair_state(message: str = "选择工程目录后即可检查可自动优化项") -> dict[str, object]:
@@ -154,107 +183,51 @@ def _candidate_id(
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
 
 
-def _missing_directory_candidate(
-    root: Path,
-    manifest: Path,
-    document: dict[str, object],
-) -> RepairCandidate | None:
-    required_name = _required_directory(_module_type(document))
-    target = manifest.parent / required_name if required_name else None
-    if target is None or target.exists() or not _is_within_root(root, target):
-        return None
-    title = "补全行为包必需目录" if required_name == "entities" else "补全资源包必需目录"
-    return RepairCandidate(
-        root,
-        _candidate_id(root, REPAIR_CREATE_REQUIRED_DIRECTORY, manifest, target),
-        REPAIR_CREATE_REQUIRED_DIRECTORY,
-        title,
-        f"{manifest.parent.name} 缺少 {required_name}，网易打包前置检查会要求该目录存在。",
-        f"新增空目录 {required_name}，不会修改现有文件。",
-        target,
-        manifest,
-        target,
-    )
-
-
-def _resource_entities_candidate(
-    root: Path,
-    manifest: Path,
-    document: dict[str, object],
-) -> RepairCandidate | None:
-    if _module_type(document) != _RESOURCE_MODULE_TYPE:
-        return None
-    source = manifest.parent / "entities"
-    target = manifest.parent / "entity"
-    if not source.is_dir() or target.exists() or _is_link(source):
-        return None
-    if not _is_within_root(root, source) or not _is_within_root(root, target):
-        return None
-    return RepairCandidate(
-        root,
-        _candidate_id(root, REPAIR_RENAME_RESOURCE_ENTITIES, source, target),
-        REPAIR_RENAME_RESOURCE_ENTITIES,
-        "更正资源包实体目录名称",
-        "资源包中的 entities 会被网易机审误判为行为包目录。",
-        "将 entities 原子重命名为 entity，保留其中全部文件。",
-        source,
-        source,
-        target,
-    )
-
-
-def _comment_manifest_candidate(root: Path, manifest: Path) -> RepairCandidate | None:
-    content = _read_utf8(manifest)
-    if content is None:
-        return None
-    raw, text = content
-    stripped = _strip_json_comments(text)
-    if stripped == text:
-        return None
-    try:
-        json.loads(text)
-        return None
-    except json.JSONDecodeError:
-        pass
-    try:
-        document = json.loads(stripped)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(document, dict):
-        return None
-    digest = hashlib.sha256(raw).hexdigest()
-    return RepairCandidate(
-        root,
-        _candidate_id(root, REPAIR_NORMALIZE_MANIFEST_COMMENTS, manifest, manifest, digest),
-        REPAIR_NORMALIZE_MANIFEST_COMMENTS,
-        "移除 manifest JSON 注释",
-        "当前 manifest 在移除注释后可完整解析；注释会导致网易打包机拒绝该文件。",
-        "以 UTF-8 重新输出等价 JSON，仅移除注释与原有排版。",
-        manifest,
-        manifest,
-        manifest,
-        digest,
-    )
-
-
 def discover_repairs(project_dir: str) -> list[RepairCandidate]:
     """只从当前可验证的工程状态生成修复计划，不写入任何文件。"""
 
     root = _project_root(project_dir)
-    candidates: list[RepairCandidate] = []
-    for manifest in sorted(_iter_manifests(root), key=lambda item: _relative(root, item)):
-        document = _manifest_document(manifest)
-        if document is not None:
-            for candidate in (
-                _missing_directory_candidate(root, manifest, document),
-                _resource_entities_candidate(root, manifest, document),
-            ):
-                if candidate is not None:
-                    candidates.append(candidate)
-        comment_candidate = _comment_manifest_candidate(root, manifest)
-        if comment_candidate is not None:
-            candidates.append(comment_candidate)
-    return candidates
+    from .blocking_repair_basic_actions import discover_basic_repairs
+    from .blocking_repair_extensions import discover_extra_repairs
+
+    candidates = [*discover_basic_repairs(root), *discover_extra_repairs(root)]
+    return sorted(candidates, key=lambda item: (item.kind, _relative(root, item.display_path)))
+
+
+def is_non_code_issue(code: int, title: str) -> bool:
+    return code in NON_CODE_ERROR_CODES or (code, title) in NON_CODE_ERROR_TITLES
+
+
+def issue_guidance(code: int, title: str) -> str:
+    if code == 18 and title == "工程包含编辑信息":
+        return "可安全删除的工作台编辑信息会在上方显示为确认清理项。"
+    if code == 18:
+        return "这是代码或 API 审核问题，必须修改源码后重新审核。"
+    if code in {24, 36}:
+        return "安全缓存、编译产物和编辑信息会显示为确认清理项；.git 等受保护内容不会自动删除。"
+    if code in {6, 10}:
+        return "仅当能无冲突确定组件包目标目录时会显示迁移项；缺 manifest、structures 引用等情况需人工处理。"
+    if code == 23:
+        return "仅 level.dat 或 level.dat_old 的只读属性可自动解除；其他写入失败需检查文件占用和权限。"
+    if code in {29, 37, 40}:
+        return "存在经过源码规则验证的修复时会显示在上方；无法验证的内容保持只读。"
+    if code == 38:
+        return "可解析的 JSON 注释、UTF-8 BOM 会显示修复项；未知编码或损坏结构不能可靠自动转换。"
+    if code in {0, 12, 13, 30, 31}:
+        return "涉及工程类型或世界数据，程序不会生成、删除或降级世界数据。"
+    if code == 35 and "标识符" in title:
+        return "这是 Python 代码标识符审核问题，必须修改源码后重新审核。"
+    if code in {16, 27, 35}:
+        return "重命名可能遗漏资源引用或改变代码标识符，需人工确认后处理。"
+    if code == 34:
+        return "仅 8-bit RGBA 字体图的全透明像素 RGB 残留可无视觉变化归零；尺寸、位深和结构问题需人工处理。"
+    if code in {25, 26, 33}:
+        return "解析、贴图、音频和位图字体需要保留资源语义，程序只定位，不会盲目重写。"
+    if code == 20:
+        return "resource_pack 的目标名称无法从工程内容唯一确定，需人工选择正确目录结构。"
+    if code == 41:
+        return "这是性能警告而非机审阻断项，需要结合真实玩法采样优化代码。"
+    return "该问题暂无可验证的自动修复方案，已保留原始定位。"
 
 
 def _display_issue_path(root: Path, value: object) -> str:
@@ -274,6 +247,7 @@ def _blocking_preview(root: Path) -> tuple[int, int, list[dict[str, object]]]:
     for issue in errors[:BLOCKING_ISSUE_PREVIEW_LIMIT]:
         item = issue.as_dict()
         item["path"] = _display_issue_path(root, item.get("path"))
+        item["guidance"] = issue_guidance(issue.code, issue.title)
         preview.append(item)
     return len(errors), warnings, preview
 
@@ -318,67 +292,19 @@ def _atomic_write(path: Path, content: bytes) -> None:
         raise
 
 
-def _create_required_directory(candidate: RepairCandidate) -> list[Path]:
-    target = candidate.target_path
-    if target.exists() or not target.parent.is_dir():
-        raise ValueError("必需目录的工程状态已变化，请重新检查")
-    target.mkdir()
-    if not target.is_dir() or _is_link(target):
-        raise OSError(f"未能创建安全目录:{target}")
-    return [target]
-
-
-def _rename_resource_entities(candidate: RepairCandidate) -> list[Path]:
-    source, target = candidate.source_path, candidate.target_path
-    if not source.is_dir() or _is_link(source) or target.exists():
-        raise ValueError("资源目录的工程状态已变化，请重新检查")
-    source.rename(target)
-    if target.is_dir() and not _is_link(target):
-        return [target]
-    if target.exists() and not source.exists():
-        target.rename(source)
-    raise OSError(f"未能确认目录重命名结果:{target}")
-
-
-def _normalize_manifest_comments(candidate: RepairCandidate) -> list[Path]:
-    content = _read_utf8(candidate.source_path)
-    if content is None:
-        raise OSError(f"无法读取 manifest:{candidate.source_path}")
-    raw, text = content
-    if hashlib.sha256(raw).hexdigest() != candidate.source_digest:
-        raise ValueError("manifest 已变化，请重新检查后再修复")
-    try:
-        document = json.loads(_strip_json_comments(text))
-    except json.JSONDecodeError as error:
-        raise ValueError("manifest 注释移除后仍无法解析，未执行修改") from error
-    replacement = json.dumps(document, ensure_ascii=False, indent=4).encode("utf-8") + b"\n"
-    try:
-        _atomic_write(candidate.target_path, replacement)
-        json.loads(candidate.target_path.read_text(encoding="utf-8"))
-    except Exception as error:
-        try:
-            _atomic_write(candidate.target_path, raw)
-        except Exception as rollback_error:
-            raise OSError("manifest 写入校验失败且回滚失败") from rollback_error
-        raise OSError("manifest 写入校验失败，已回滚原文件") from error
-    return [candidate.target_path]
-
-
 def _apply_candidate(candidate: RepairCandidate) -> list[Path]:
     for path in (candidate.source_path, candidate.target_path):
         if not _is_within_root(candidate.root_path, path):
             raise ValueError("修复目标已离开工程目录，请重新检查")
         if path.exists() and _is_link(path):
             raise ValueError("修复目标已变为链接，请重新检查")
-    handlers = {
-        REPAIR_CREATE_REQUIRED_DIRECTORY: _create_required_directory,
-        REPAIR_RENAME_RESOURCE_ENTITIES: _rename_resource_entities,
-        REPAIR_NORMALIZE_MANIFEST_COMMENTS: _normalize_manifest_comments,
-    }
-    handler = handlers.get(candidate.kind)
-    if handler is None:
-        raise ValueError("未知的修复类型")
-    return handler(candidate)
+    from .blocking_repair_basic_actions import apply_basic_candidate
+    from .blocking_repair_extensions import apply_extra_candidate
+
+    basic_result = apply_basic_candidate(candidate)
+    if basic_result is not None:
+        return basic_result
+    return apply_extra_candidate(candidate)
 
 
 class BlockingRepairService:
@@ -398,22 +324,72 @@ class BlockingRepairService:
         candidate = candidates.get(repair_id)
         if candidate is None:
             raise ValueError("修复计划已过期或不存在，请重新检查")
-        changed_paths = _apply_candidate(candidate)
-        state = _build_state(root)
-        return state, {
+        applied = _apply_candidate(candidate)
+        if isinstance(applied, RepairApplyResult):
+            changed_paths = applied.changed_paths
+            undo = applied.undo
+        else:
+            changed_paths = applied
+            undo = None
+        try:
+            state = _build_state(root)
+        except Exception as error:
+            if undo is None:
+                raise
+            from .blocking_repair_extensions import restore_safe_residue
+
+            try:
+                restore_safe_residue(root, undo)
+            except Exception as rollback_error:
+                raise OSError("修复后复审失败且隔离清理撤销失败") from rollback_error
+            raise OSError("修复后复审失败，已自动撤销隔离清理") from error
+        outcome: dict[str, object] = {
             "success": True,
             "message": f"已完成“{candidate.title}”，并已自动复审。",
             "changedPaths": [_relative(root, path) for path in changed_paths],
+        }
+        if undo is not None:
+            outcome["undo"] = undo
+        return state, outcome
+
+    @staticmethod
+    def restore_and_inspect(
+        project_dir: str,
+        undo: dict[str, str],
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        from .blocking_repair_extensions import restore_safe_residue
+
+        root = _project_root(project_dir)
+        restored_path = restore_safe_residue(root, undo)
+        state = _build_state(root)
+        return state, {
+            "success": True,
+            "message": "已恢复上次清理的打包残留，并已自动复审。",
+            "changedPaths": [_relative(root, restored_path)],
+            "clearUndo": True,
         }
 
 
 __all__ = [
     "BLOCKING_ISSUE_PREVIEW_LIMIT",
     "BlockingRepairService",
+    "KNOWN_AUDIT_ERROR_CODES",
+    "NON_CODE_ERROR_CODES",
+    "NON_CODE_ERROR_TITLES",
+    "REPAIR_CLEAR_LEVEL_READONLY",
     "REPAIR_CREATE_REQUIRED_DIRECTORY",
+    "REPAIR_FIX_PLAYER_CONTROLLERS",
+    "REPAIR_MOVE_PACK_LAYOUT",
+    "REPAIR_NORMALIZE_GLYPH_TRANSPARENCY",
     "REPAIR_NORMALIZE_MANIFEST_COMMENTS",
+    "REPAIR_NORMALIZE_JSON_BOM",
+    "REPAIR_REMOVE_SAFE_RESIDUE",
     "REPAIR_RENAME_RESOURCE_ENTITIES",
+    "REPAIR_SET_MIN_ENGINE_VERSION",
+    "RepairApplyResult",
     "RepairCandidate",
     "discover_repairs",
     "empty_repair_state",
+    "is_non_code_issue",
+    "issue_guidance",
 ]

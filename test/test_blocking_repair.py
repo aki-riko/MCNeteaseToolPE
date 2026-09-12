@@ -13,6 +13,7 @@ from src.blocking_repair import (
     BlockingRepairService,
     REPAIR_CREATE_REQUIRED_DIRECTORY,
     REPAIR_NORMALIZE_MANIFEST_COMMENTS,
+    REPAIR_REMOVE_SAFE_RESIDUE,
     REPAIR_RENAME_RESOURCE_ENTITIES,
 )
 from src.blocking_repair_backend import BlockingRepairBackend
@@ -187,3 +188,52 @@ def test_qml_backend_dispatches_inspection_and_writes_to_background_pool(
     assert (behavior / "entities").is_dir()
     assert backend.state["repairableCount"] == 0
     assert results[-1]["success"] is True
+
+
+def test_qml_backend_undoes_the_last_isolated_cleanup_in_background_pool(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import prismqml
+
+    cache = tmp_path / "__pycache__"
+    cache.mkdir()
+    cached_file = cache / "module.pyc"
+    cached_file.write_bytes(b"cache")
+    calls: list[tuple[object, tuple[object, ...]]] = []
+
+    class _Succeeded:
+        def __init__(self, payload: object) -> None:
+            self._payload = payload
+
+        def connect(self, callback) -> None:
+            callback(self._payload)
+
+    class _Ignored:
+        def connect(self, _callback) -> None:
+            return None
+
+    class _Handle:
+        def __init__(self, payload: object) -> None:
+            self.succeeded = _Succeeded(payload)
+            self.failed = _Ignored()
+
+    def fake_run_in_pool(operation, *arguments):
+        calls.append((operation, arguments))
+        return _Handle(operation(*arguments))
+
+    monkeypatch.setattr(prismqml, "run_in_pool", fake_run_in_pool)
+    backend = BlockingRepairBackend()
+
+    backend.inspect(str(tmp_path))
+    repair_id = _repair_id(backend.state, REPAIR_REMOVE_SAFE_RESIDUE)
+    backend.applyRepair(repair_id)
+
+    assert backend.canUndo is True
+    assert not cache.exists()
+
+    backend.undoLastRemoval()
+
+    assert len(calls) == 3
+    assert backend.canUndo is False
+    assert cached_file.read_bytes() == b"cache"

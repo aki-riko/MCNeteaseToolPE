@@ -20,6 +20,7 @@ class BlockingRepairBackend(QObject):
 
     stateChanged = Signal()
     busyChanged = Signal()
+    canUndoChanged = Signal()
     result = Signal("QVariant")
 
     def __init__(
@@ -32,6 +33,7 @@ class BlockingRepairBackend(QObject):
         self._state = empty_repair_state()
         self._busy = False
         self._task_handle = None
+        self._last_undo: dict[str, str] | None = None
 
     @Property("QVariantMap", notify=stateChanged)
     def state(self) -> dict[str, object]:
@@ -40,6 +42,10 @@ class BlockingRepairBackend(QObject):
     @Property(bool, notify=busyChanged)
     def busy(self) -> bool:
         return self._busy
+
+    @Property(bool, notify=canUndoChanged)
+    def canUndo(self) -> bool:
+        return self._last_undo is not None
 
     @Slot(str)
     def inspect(self, project_dir: str) -> None:
@@ -60,10 +66,23 @@ class BlockingRepairBackend(QObject):
         )
 
     @Slot()
+    def undoLastRemoval(self) -> None:
+        root_path = self._state.get("rootPath")
+        if not isinstance(root_path, str) or not root_path or self._last_undo is None:
+            self._emit_failure("没有可撤销的隔离清理")
+            return
+        undo = dict(self._last_undo)
+        self._start_task(
+            lambda: self._service.restore_and_inspect(root_path, undo),
+            "撤销清理",
+        )
+
+    @Slot()
     def reset(self) -> None:
         if self._busy:
             return
         self._state = empty_repair_state()
+        self._set_last_undo(None)
         self.stateChanged.emit()
 
     def _start_task(self, operation: Callable[[], object], label: str) -> None:
@@ -103,6 +122,7 @@ class BlockingRepairBackend(QObject):
             return
         self.stateChanged.emit()
         if outcome is not None:
+            self._update_undo(outcome)
             self.result.emit(outcome)
 
     def _fail_task(self, handle: object, failure: object, label: str) -> None:
@@ -118,6 +138,21 @@ class BlockingRepairBackend(QObject):
         self._state = {**self._state, "phase": "failed", "message": message}
         self.stateChanged.emit()
         self.result.emit({"success": False, "message": message, "changedPaths": []})
+
+    def _update_undo(self, outcome: object) -> None:
+        if not isinstance(outcome, dict):
+            return
+        undo = outcome.get("undo")
+        if isinstance(undo, dict) and all(isinstance(value, str) for value in undo.values()):
+            self._set_last_undo(dict(undo))
+        elif outcome.get("clearUndo") is True:
+            self._set_last_undo(None)
+
+    def _set_last_undo(self, value: dict[str, str] | None) -> None:
+        had_undo = self._last_undo is not None
+        self._last_undo = value
+        if had_undo != (value is not None):
+            self.canUndoChanged.emit()
 
     def _set_busy(self, value: bool) -> None:
         if self._busy == value:

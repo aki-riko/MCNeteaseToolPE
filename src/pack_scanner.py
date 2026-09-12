@@ -17,7 +17,7 @@ from typing import Callable, Iterable, Iterator, Mapping
 
 from .audit_codes import code_name
 from .code_review_compat import find_legacy_property_accesses
-from .config import AUDIT_MAX_FILE_NAME_CHARS
+from .config import AUDIT_MAX_FILE_NAME_CHARS, AUDIT_MIN_ENGINE_VERSION
 from .legacy_pylint_runner import (
     LEGACY_PYLINT_IGNORED_MESSAGE_IDS,
     LEGACY_PYLINT_MESSAGE_IDS,
@@ -438,8 +438,17 @@ def _check_manifests(root: str, output: list[AuditIssue]) -> None:
                 major, minor = int(version[0]), int(version[1])
             except (TypeError, ValueError):
                 major, minor = 0, 0
-            if (major, minor) < (1, 18):
-                output.append(_issue(37, "error", f"min_engine_version 过低({major}.{minor} < 1.18.0)", rel, path))
+            minimum = AUDIT_MIN_ENGINE_VERSION
+            if (major, minor) < minimum[:2]:
+                output.append(
+                    _issue(
+                        37,
+                        "error",
+                        f"min_engine_version 过低({major}.{minor} < {minimum[0]}.{minimum[1]}.{minimum[2]})",
+                        rel,
+                        path,
+                    )
+                )
     behavior_dir = os.path.join(root, "behavior_packs")
     if os.path.isdir(behavior_dir) and not manifests:
         output.append(_issue(10, "error", "behavior_packs 下缺少 manifest.json", "behavior_packs", behavior_dir))

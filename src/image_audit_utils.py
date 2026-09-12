@@ -109,4 +109,142 @@ def png_has_invalid_transparent_pixels(path: Path) -> bool | None:
     return False
 
 
-__all__ = ["image_dimensions", "png_has_invalid_transparent_pixels"]
+def png_transparent_pixel_status(path: Path) -> str | None:
+    """Classify transparent-pixel validity without treating every code 34 alike."""
+
+    invalid = png_has_invalid_transparent_pixels(path)
+    if invalid is False:
+        return "valid"
+    if invalid is None:
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if len(data) < 33 or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "unsupported"
+    payload = data[16:29]
+    if data[12:16] != b"IHDR" or len(payload) != 13:
+        return "unsupported"
+    _width, _height, depth, color_type, compression, filtering, interlace = struct.unpack(
+        ">IIBBBBB", payload
+    )
+    supported = (depth, color_type, compression, filtering, interlace) == (8, 6, 0, 0, 0)
+    return "invalid" if supported else "unsupported"
+
+
+def _png_chunk(kind: bytes, payload: bytes) -> bytes:
+    checksum = zlib.crc32(kind + payload) & 0xFFFFFFFF
+    return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
+
+
+def normalize_png_transparent_pixels(data: bytes) -> bytes | None:
+    """Return a visually identical RGBA PNG with RGB cleared under alpha zero.
+
+    Unsupported PNG variants and already-valid images return ``None``. Ancillary
+    chunks are preserved byte-for-byte; only IDAT is regenerated with filter 0.
+    """
+
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    offset = 8
+    chunks: list[tuple[bytes, bytes, bytes]] = []
+    image_data = bytearray()
+    width = height = 0
+    supported = False
+    saw_iend = False
+    while offset + 12 <= len(data):
+        size = struct.unpack(">I", data[offset : offset + 4])[0]
+        end = offset + 12 + size
+        if end > len(data):
+            return None
+        kind = data[offset + 4 : offset + 8]
+        payload = data[offset + 8 : offset + 8 + size]
+        raw_chunk = data[offset:end]
+        chunks.append((kind, payload, raw_chunk))
+        offset = end
+        if kind == b"IHDR" and len(payload) == 13:
+            width, height, depth, color_type, compression, filtering, interlace = struct.unpack(
+                ">IIBBBBB", payload
+            )
+            supported = (depth, color_type, compression, filtering, interlace) == (8, 6, 0, 0, 0)
+        elif kind == b"IDAT":
+            image_data.extend(payload)
+        elif kind == b"IEND":
+            saw_iend = True
+            break
+    if not saw_iend or offset != len(data) or not supported or width <= 0 or height <= 0:
+        return None
+    try:
+        raw = zlib.decompress(bytes(image_data))
+    except zlib.error:
+        return None
+    normalized = _normalize_rgba_scanlines(raw, width, height)
+    if normalized is None:
+        return None
+    scanlines, changed = normalized
+    if not changed:
+        return None
+    output = bytearray(data[:8])
+    emitted_idat = False
+    for kind, _payload, raw_chunk in chunks:
+        if kind == b"IDAT":
+            if not emitted_idat:
+                output.extend(_png_chunk(b"IDAT", zlib.compress(scanlines)))
+                emitted_idat = True
+            continue
+        output.extend(raw_chunk)
+    return bytes(output) if emitted_idat else None
+
+
+def _normalize_rgba_scanlines(raw: bytes, width: int, height: int) -> tuple[bytes, bool] | None:
+    stride = width * 4
+    if len(raw) != height * (stride + 1):
+        return None
+    previous = bytearray(stride)
+    output = bytearray()
+    changed = False
+    cursor = 0
+    for _row in range(height):
+        filter_type = raw[cursor]
+        current = bytearray(raw[cursor + 1 : cursor + 1 + stride])
+        cursor += stride + 1
+        if not _unfilter_rgba_row(current, previous, filter_type):
+            return None
+        for index in range(0, stride, 4):
+            if current[index + 3] == 0 and any(current[index : index + 3]):
+                current[index : index + 3] = b"\0\0\0"
+                changed = True
+        output.append(0)
+        output.extend(current)
+        previous = current
+    return bytes(output), changed
+
+
+def _unfilter_rgba_row(current: bytearray, previous: bytearray, filter_type: int) -> bool:
+    for index in range(len(current)):
+        left = current[index - 4] if index >= 4 else 0
+        up = previous[index]
+        upper_left = previous[index - 4] if index >= 4 else 0
+        if filter_type == 1:
+            current[index] = (current[index] + left) & 0xFF
+        elif filter_type == 2:
+            current[index] = (current[index] + up) & 0xFF
+        elif filter_type == 3:
+            current[index] = (current[index] + ((left + up) // 2)) & 0xFF
+        elif filter_type == 4:
+            predictor = left + up - upper_left
+            values = (left, up, upper_left)
+            distances = tuple(abs(predictor - value) for value in values)
+            current[index] = (current[index] + values[distances.index(min(distances))]) & 0xFF
+        elif filter_type != 0:
+            return False
+    return True
+
+
+__all__ = [
+    "image_dimensions",
+    "normalize_png_transparent_pixels",
+    "png_has_invalid_transparent_pixels",
+    "png_transparent_pixel_status",
+]
