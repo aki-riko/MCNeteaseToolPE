@@ -5,7 +5,7 @@
 
 """Application entry. 应用入口。
 
-装配窗口与六个页面(工程处理 / NBT / 性能诊断 / 缓存清理 / MCP / 设置),
+装配窗口与七个页面(工程处理 / 阻塞项修复 / NBT / 性能诊断 / 缓存清理 / MCP / 设置),
 复用 PrismQML 的 Bar 窗口与导航。
 """
 
@@ -30,6 +30,7 @@ from prismqml.python.window.tray_types import ActivationReason
 
 from src.audit_cli import run_audit_cli
 from src.backends import ProjectBackend
+from src.blocking_repair_backend import BlockingRepairBackend
 from src.config import (
     APP_TITLE,
     APP_VERSION,
@@ -235,6 +236,7 @@ def main() -> int:
     # 三项工程能力共享一个顶级页面与目录选择，子后端仍保持职责隔离。
     settings_backend = ApplicationSettingsBackend()
     project_backend = ProjectBackend(settings_backend=settings_backend)
+    blocking_repair_backend = BlockingRepairBackend()
     level_dat_backend = LevelDatBackend(settings_backend=settings_backend)
     performance_backend = PerformanceBackend()
     minecraft_cleanup_backend = MinecraftCleanupBackend()
@@ -244,6 +246,12 @@ def main() -> int:
         _page_factory("ProjectPage.qml", project_backend),
         "AppsListDetail",
         "工程处理",
+        position="top",
+    )
+    win.addPage(
+        _page_factory("BlockingRepairPage.qml", blocking_repair_backend),
+        "WrenchScrewdriver",
+        "阻塞项修复",
         position="top",
     )
     win.addPage(
