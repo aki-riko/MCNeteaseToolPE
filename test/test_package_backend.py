@@ -21,7 +21,9 @@ def test_create_zip_archive_contains_only_component_packs_and_replaces_output(
     project = tmp_path / "mojin"
     pack = project / "behavior_demo"
     pack.mkdir(parents=True)
-    (pack / "manifest.json").write_text("{\"name\": \"demo\"}", encoding="utf-8")
+    (pack / "manifest.json").write_text(
+        '{"modules": [{"type": "data"}]}', encoding="utf-8"
+    )
     (pack / "script.py").write_text("value = 1\n", encoding="utf-8")
     (project / "README.txt").write_text("demo", encoding="utf-8")
     (tmp_path / "outside.txt").write_text("must not be packaged", encoding="utf-8")
@@ -82,12 +84,65 @@ def test_create_zip_archive_rejects_addon_pack_not_directly_under_project_root(
     project = tmp_path / "addon"
     pack = project / "wrapper" / "behavior_demo"
     pack.mkdir(parents=True)
-    (pack / "manifest.json").write_text("{}", encoding="utf-8")
+    (pack / "manifest.json").write_text(
+        '{"modules": [{"type": "data"}]}', encoding="utf-8"
+    )
 
     with pytest.raises(ValueError, match="工程根目录下一层"):
         create_zip_archive(str(project))
 
     assert not (project / "addon.zip").exists()
+
+
+def test_create_zip_archive_classifies_packs_from_manifest_module_types(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "addon"
+    behavior = project / "arbitrary-behavior-folder"
+    resource = project / "arbitrary-resource-folder"
+    invalid = project / "looks-like-resource"
+    nested_invalid = behavior / "old-export"
+    for pack in (behavior, resource, invalid, nested_invalid):
+        pack.mkdir(parents=True)
+    (behavior / "manifest.json").write_text(
+        '{"modules": [{"type": "data"}]}', encoding="utf-8"
+    )
+    (behavior / "functions.mcfunction").write_text("say ok\n", encoding="utf-8")
+    (resource / "manifest.json").write_text(
+        '{"modules": [{"type": "resources"}]}', encoding="utf-8"
+    )
+    (resource / "textures.json").write_text("{}", encoding="utf-8")
+    (invalid / "manifest.json").write_text(
+        '{"modules": [{"type": "skin_pack"}]}', encoding="utf-8"
+    )
+    (invalid / "must-not-enter.txt").write_text("invalid", encoding="utf-8")
+    (nested_invalid / "manifest.json").write_text(
+        '{"modules": [{"type": "interface"}]}', encoding="utf-8"
+    )
+    (nested_invalid / "must-not-enter.txt").write_text("invalid", encoding="utf-8")
+
+    result = create_zip_archive(str(project))
+
+    with zipfile.ZipFile(result.archive_path) as bundle:
+        names = set(bundle.namelist())
+    assert "arbitrary-behavior-folder/manifest.json" in names
+    assert "arbitrary-resource-folder/manifest.json" in names
+    assert "looks-like-resource/manifest.json" not in names
+    assert "looks-like-resource/must-not-enter.txt" not in names
+    assert "arbitrary-behavior-folder/old-export/must-not-enter.txt" not in names
+    assert result.file_count == 4
+
+
+def test_create_zip_archive_rejects_project_with_only_invalid_packs(tmp_path: Path) -> None:
+    project = tmp_path / "invalid-addon"
+    pack = project / "not-a-pack"
+    pack.mkdir(parents=True)
+    (pack / "manifest.json").write_text(
+        '{"modules": [{"type": "skin_pack"}]}', encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="有效的 resource/behavior"):
+        create_zip_archive(str(project))
 
 
 def test_archive_validation_failure_preserves_previous_output(
@@ -97,7 +152,9 @@ def test_archive_validation_failure_preserves_previous_output(
     project = tmp_path / "addon"
     pack = project / "behavior_demo"
     pack.mkdir(parents=True)
-    (pack / "manifest.json").write_text("{}", encoding="utf-8")
+    (pack / "manifest.json").write_text(
+        '{"modules": [{"type": "data"}]}', encoding="utf-8"
+    )
     archive = project / "addon.zip"
     archive.write_bytes(b"previous-output")
 
@@ -138,7 +195,9 @@ def test_package_backend_creates_zip_without_blocking_the_qt_event_loop(tmp_path
     project = tmp_path / "demo_project"
     pack = project / "behavior_demo"
     pack.mkdir(parents=True)
-    (pack / "manifest.json").write_text("{}", encoding="utf-8")
+    (pack / "manifest.json").write_text(
+        '{"modules": [{"type": "data"}]}', encoding="utf-8"
+    )
     (pack / "script.py").write_text("value = 1\n", encoding="utf-8")
     backend = PackageBackend()
     results: list[tuple[object, ...]] = []

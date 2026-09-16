@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import json
 import logging
 import os
 from pathlib import Path
@@ -38,17 +39,52 @@ class ArchiveResult(NamedTuple):
 ProgressCallback = Callable[[int, int], None]
 
 
+_BEHAVIOR_MODULE_TYPES = frozenset({"data", "client_data", "javascript"})
+_RESOURCE_MODULE_TYPES = frozenset({"resources"})
+_VALID_MODULE_TYPES = _BEHAVIOR_MODULE_TYPES | _RESOURCE_MODULE_TYPES
+
+
+def _manifest_module_types(manifest: Path) -> frozenset[str]:
+    """Read the module types that make a directory a real MC component pack."""
+
+    try:
+        document = json.loads(manifest.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        LOGGER.warning("无法读取组件包 manifest，跳过无效包 %s: %s", manifest, error)
+        return frozenset()
+    if not isinstance(document, dict):
+        return frozenset()
+    modules = document.get("modules")
+    if not isinstance(modules, list):
+        return frozenset()
+    return frozenset(
+        str(module.get("type"))
+        for module in modules
+        if isinstance(module, dict) and isinstance(module.get("type"), str)
+    )
+
+
+def _is_valid_addon_pack(pack_dir: Path) -> bool:
+    """Classify packs from manifest contents, never from their folder name."""
+
+    return bool(_manifest_module_types(pack_dir / "manifest.json") & _VALID_MODULE_TYPES)
+
+
 def _walk_entries(
     root: Path,
     source_dir: Path,
     excluded_files: frozenset[Path] = frozenset(),
+    excluded_directories: frozenset[Path] = frozenset(),
 ) -> tuple[list[tuple[Path, str]], int]:
     entries: list[tuple[Path, str]] = []
     file_count = 0
     for current, directories, names in os.walk(source_dir, topdown=True, followlinks=False):
         current_path = Path(current)
         directories[:] = sorted(
-            name for name in directories if not (current_path / name).is_symlink()
+            name
+            for name in directories
+            if not (current_path / name).is_symlink()
+            and (current_path / name).resolve() not in excluded_directories
         )
         if current_path != root:
             entries.append((current_path, current_path.relative_to(root).as_posix() + "/"))
@@ -81,10 +117,11 @@ def _pack_entries(
         Path(path).resolve()
         for path in sorted(_collect_pack_dirs(str(root)), key=str.casefold)
     ]
-    if not discovered:
-        raise ValueError("工程内未找到含 manifest.json 的组件包")
+    valid_discovered = [path for path in discovered if _is_valid_addon_pack(path)]
+    if not valid_discovered:
+        raise ValueError("工程内未找到有效的 resource/behavior 组件包")
     pack_dirs: list[Path] = []
-    for candidate in sorted(discovered, key=lambda path: (len(path.parts), str(path).casefold())):
+    for candidate in sorted(valid_discovered, key=lambda path: (len(path.parts), str(path).casefold())):
         if any(parent == candidate or parent in candidate.parents for parent in pack_dirs):
             continue
         pack_dirs.append(candidate)
@@ -94,8 +131,19 @@ def _pack_entries(
         relative = ", ".join(path.relative_to(root).as_posix() for path in invalid)
         raise ValueError(f"Addon 组件包必须直接位于工程根目录下一层:{relative}")
 
+    invalid_nested_dirs = frozenset(
+        candidate
+        for candidate in discovered
+        if candidate not in pack_dirs
+        and any(candidate != pack_dir and pack_dir in candidate.parents for pack_dir in pack_dirs)
+    )
     for pack_dir in pack_dirs:
-        pack_entries, pack_file_count = _walk_entries(root, pack_dir, excluded_files)
+        pack_entries, pack_file_count = _walk_entries(
+            root,
+            pack_dir,
+            excluded_files,
+            invalid_nested_dirs,
+        )
         entries.extend(pack_entries)
         file_count += pack_file_count
     return entries, file_count, pack_dirs
