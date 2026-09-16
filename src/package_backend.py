@@ -20,7 +20,7 @@ from PySide6.QtCore import QObject, Property, Signal, Slot
 from prismqml import current_task, run_in_thread
 
 from .config import TASK_PROGRESS_THROTTLE_MS, ZIP_COMPRESSION_LEVEL
-from .pack_scanner import _collect_pack_dirs
+from .pack_scanner import _collect_pack_dirs, ensure_required_pack_directories
 from .project_structure import is_map_project
 
 
@@ -242,6 +242,8 @@ def create_zip_archive(
     )
     archive.parent.mkdir(parents=True, exist_ok=True)
 
+    if not is_map_project(root):
+        ensure_required_pack_directories(str(root))
     entries, file_count, pack_dirs = _pack_entries(root, frozenset({archive}))
     if any(archive == pack or pack in archive.parents for pack in pack_dirs):
         raise ValueError("ZIP 输出路径不能位于组件包目录内")

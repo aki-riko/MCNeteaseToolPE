@@ -109,11 +109,11 @@ def test_create_zip_archive_classifies_packs_from_documented_directory_structure
     (behavior / "entities").mkdir()
     (resource / "textures").mkdir()
     (behavior / "manifest.json").write_text(
-        '{"modules": [{"type": "resources"}]}', encoding="utf-8"
+        '{"modules": [{"type": "data"}]}', encoding="utf-8"
     )
     (behavior / "functions.mcfunction").write_text("say ok\n", encoding="utf-8")
     (resource / "manifest.json").write_text(
-        '{"modules": [{"type": "data"}]}', encoding="utf-8"
+        '{"modules": [{"type": "resources"}]}', encoding="utf-8"
     )
     (resource / "textures.json").write_text("{}", encoding="utf-8")
     (invalid / "manifest.json").write_text(
@@ -135,6 +135,26 @@ def test_create_zip_archive_classifies_packs_from_documented_directory_structure
     assert "looks-like-resource/must-not-enter.txt" not in names
     assert "arbitrary-behavior-folder/old-export/must-not-enter.txt" not in names
     assert result.file_count == 4
+
+
+def test_create_zip_archive_repairs_required_directory_before_classifying_pack(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "addon"
+    behavior = project / "arbitrary-behavior-folder"
+    behavior.mkdir(parents=True)
+    (behavior / "manifest.json").write_text(
+        '{"modules": [{"type": "data"}]}', encoding="utf-8"
+    )
+    (behavior / "functions.mcfunction").write_text("say repaired\n", encoding="utf-8")
+
+    result = create_zip_archive(str(project))
+
+    assert (behavior / "entities").is_dir()
+    with zipfile.ZipFile(result.archive_path) as bundle:
+        names = set(bundle.namelist())
+    assert "arbitrary-behavior-folder/manifest.json" in names
+    assert "arbitrary-behavior-folder/functions.mcfunction" in names
 
 
 def test_create_zip_archive_rejects_project_with_only_invalid_packs(tmp_path: Path) -> None:
