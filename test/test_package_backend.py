@@ -21,6 +21,7 @@ def test_create_zip_archive_contains_only_component_packs_and_replaces_output(
     project = tmp_path / "mojin"
     pack = project / "behavior_demo"
     pack.mkdir(parents=True)
+    (pack / "entities").mkdir()
     (pack / "manifest.json").write_text(
         '{"modules": [{"type": "data"}]}', encoding="utf-8"
     )
@@ -43,8 +44,8 @@ def test_create_zip_archive_contains_only_component_packs_and_replaces_output(
     assert Path(result.archive_path) == archive.resolve()
     assert result.file_count == 2
     assert result.size_bytes == archive.stat().st_size
-    assert progress[0] == (0, 3)
-    assert progress[-1] == (3, 3)
+    assert progress[0] == (0, 4)
+    assert progress[-1] == (4, 4)
     with zipfile.ZipFile(archive) as bundle:
         assert sorted(name for name in bundle.namelist() if not name.endswith("/")) == [
             "behavior_demo/manifest.json",
@@ -84,6 +85,7 @@ def test_create_zip_archive_rejects_addon_pack_not_directly_under_project_root(
     project = tmp_path / "addon"
     pack = project / "wrapper" / "behavior_demo"
     pack.mkdir(parents=True)
+    (pack / "entities").mkdir()
     (pack / "manifest.json").write_text(
         '{"modules": [{"type": "data"}]}', encoding="utf-8"
     )
@@ -94,7 +96,7 @@ def test_create_zip_archive_rejects_addon_pack_not_directly_under_project_root(
     assert not (project / "addon.zip").exists()
 
 
-def test_create_zip_archive_classifies_packs_from_manifest_module_types(
+def test_create_zip_archive_classifies_packs_from_documented_directory_structure(
     tmp_path: Path,
 ) -> None:
     project = tmp_path / "addon"
@@ -104,12 +106,14 @@ def test_create_zip_archive_classifies_packs_from_manifest_module_types(
     nested_invalid = behavior / "old-export"
     for pack in (behavior, resource, invalid, nested_invalid):
         pack.mkdir(parents=True)
+    (behavior / "entities").mkdir()
+    (resource / "textures").mkdir()
     (behavior / "manifest.json").write_text(
-        '{"modules": [{"type": "data"}]}', encoding="utf-8"
+        '{"modules": [{"type": "resources"}]}', encoding="utf-8"
     )
     (behavior / "functions.mcfunction").write_text("say ok\n", encoding="utf-8")
     (resource / "manifest.json").write_text(
-        '{"modules": [{"type": "resources"}]}', encoding="utf-8"
+        '{"modules": [{"type": "data"}]}', encoding="utf-8"
     )
     (resource / "textures.json").write_text("{}", encoding="utf-8")
     (invalid / "manifest.json").write_text(
@@ -141,7 +145,7 @@ def test_create_zip_archive_rejects_project_with_only_invalid_packs(tmp_path: Pa
         '{"modules": [{"type": "skin_pack"}]}', encoding="utf-8"
     )
 
-    with pytest.raises(ValueError, match="有效的 resource/behavior"):
+    with pytest.raises(ValueError, match="符合 resource/behavior 目录结构"):
         create_zip_archive(str(project))
 
 
@@ -152,6 +156,7 @@ def test_archive_validation_failure_preserves_previous_output(
     project = tmp_path / "addon"
     pack = project / "behavior_demo"
     pack.mkdir(parents=True)
+    (pack / "entities").mkdir()
     (pack / "manifest.json").write_text(
         '{"modules": [{"type": "data"}]}', encoding="utf-8"
     )
@@ -195,6 +200,7 @@ def test_package_backend_creates_zip_without_blocking_the_qt_event_loop(tmp_path
     project = tmp_path / "demo_project"
     pack = project / "behavior_demo"
     pack.mkdir(parents=True)
+    (pack / "entities").mkdir()
     (pack / "manifest.json").write_text(
         '{"modules": [{"type": "data"}]}', encoding="utf-8"
     )

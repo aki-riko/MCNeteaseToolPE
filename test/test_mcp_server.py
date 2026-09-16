@@ -174,6 +174,7 @@ def test_mutating_tools_require_confirmation_and_stay_in_project(tmp_path: Path)
 
     cleaned = service.clean_project(str(project), confirm=True)
     rewritten = service.rewrite_project_uuids(str(project), confirm=True)
+    (project / "behavior_demo" / "entities").mkdir()
     packaged = service.package_project(str(project), confirm=True)
 
     assert cleaned["success"] is True

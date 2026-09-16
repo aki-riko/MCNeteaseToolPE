@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-import json
 import logging
 import os
 from pathlib import Path
@@ -39,35 +38,37 @@ class ArchiveResult(NamedTuple):
 ProgressCallback = Callable[[int, int], None]
 
 
-_BEHAVIOR_MODULE_TYPES = frozenset({"data", "client_data", "javascript"})
-_RESOURCE_MODULE_TYPES = frozenset({"resources"})
-_VALID_MODULE_TYPES = _BEHAVIOR_MODULE_TYPES | _RESOURCE_MODULE_TYPES
+_BEHAVIOR_MARKER_DIRECTORY = "entities"
+_RESOURCE_MARKER_DIRECTORY = "textures"
 
 
-def _manifest_module_types(manifest: Path) -> frozenset[str]:
-    """Read the module types that make a directory a real MC component pack."""
+def _addon_pack_kind(pack_dir: Path) -> str:
+    """Classify an Add-on pack from its documented child-directory structure."""
 
-    try:
-        document = json.loads(manifest.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        LOGGER.warning("无法读取组件包 manifest，跳过无效包 %s: %s", manifest, error)
-        return frozenset()
-    if not isinstance(document, dict):
-        return frozenset()
-    modules = document.get("modules")
-    if not isinstance(modules, list):
-        return frozenset()
-    return frozenset(
-        str(module.get("type"))
-        for module in modules
-        if isinstance(module, dict) and isinstance(module.get("type"), str)
+    if not (pack_dir / "manifest.json").is_file():
+        return ""
+    has_behavior_marker = (pack_dir / _BEHAVIOR_MARKER_DIRECTORY).is_dir()
+    has_resource_marker = (pack_dir / _RESOURCE_MARKER_DIRECTORY).is_dir()
+    if has_behavior_marker and not has_resource_marker:
+        return "behavior"
+    if has_resource_marker and not has_behavior_marker:
+        return "resource"
+    return ""
+
+
+def _direct_addon_pack_dirs(root: Path) -> list[Path]:
+    """Find valid Add-on packs directly below the Add-on root."""
+
+    return sorted(
+        (
+            entry.resolve()
+            for entry in root.iterdir()
+            if entry.is_dir()
+            and not entry.is_symlink()
+            and _addon_pack_kind(entry)
+        ),
+        key=lambda path: str(path).casefold(),
     )
-
-
-def _is_valid_addon_pack(pack_dir: Path) -> bool:
-    """Classify packs from manifest contents, never from their folder name."""
-
-    return bool(_manifest_module_types(pack_dir / "manifest.json") & _VALID_MODULE_TYPES)
 
 
 def _walk_entries(
@@ -117,25 +118,23 @@ def _pack_entries(
         Path(path).resolve()
         for path in sorted(_collect_pack_dirs(str(root)), key=str.casefold)
     ]
-    valid_discovered = [path for path in discovered if _is_valid_addon_pack(path)]
-    if not valid_discovered:
-        raise ValueError("工程内未找到有效的 resource/behavior 组件包")
-    pack_dirs: list[Path] = []
-    for candidate in sorted(valid_discovered, key=lambda path: (len(path.parts), str(path).casefold())):
-        if any(parent == candidate or parent in candidate.parents for parent in pack_dirs):
-            continue
-        pack_dirs.append(candidate)
-
-    invalid = [path for path in pack_dirs if path.parent != root]
-    if invalid:
-        relative = ", ".join(path.relative_to(root).as_posix() for path in invalid)
+    nested_valid = [
+        path
+        for path in discovered
+        if path.parent != root and _addon_pack_kind(path)
+    ]
+    if nested_valid:
+        relative = ", ".join(path.relative_to(root).as_posix() for path in nested_valid)
         raise ValueError(f"Addon 组件包必须直接位于工程根目录下一层:{relative}")
+
+    pack_dirs = _direct_addon_pack_dirs(root)
+    if not pack_dirs:
+        raise ValueError("工程内未找到符合 resource/behavior 目录结构的组件包")
 
     invalid_nested_dirs = frozenset(
         candidate
         for candidate in discovered
-        if candidate not in pack_dirs
-        and any(candidate != pack_dir and pack_dir in candidate.parents for pack_dir in pack_dirs)
+        if any(pack_dir in candidate.parents for pack_dir in pack_dirs)
     )
     for pack_dir in pack_dirs:
         pack_entries, pack_file_count = _walk_entries(
