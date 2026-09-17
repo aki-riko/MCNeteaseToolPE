@@ -252,7 +252,7 @@ def main() -> int:
     if cli_status is not None:
         return cli_status
 
-    # 0.4.2.24 的 FastSplash 在 App 创建阶段读取 display name，提前发布品牌信息。
+    # FastSplash 在 App 创建阶段读取 display name，提前发布品牌信息。
     App.setApplicationDisplayName(APP_TITLE)
     app = App(
         application_icon=_APP_ICON,
