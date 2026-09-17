@@ -47,6 +47,7 @@ from src.mcp_server import MCP_SERVER_FLAG
 from src.mcp_server_backend import McpServerBackend
 from src.performance_backend import PerformanceBackend
 from src.settings_backend import (
+    CLOSE_ACTION_QUIT,
     ApplicationSettingsBackend,
     ensure_mica_default_enabled,
     resolve_prismqml_config_path,
@@ -78,20 +79,47 @@ def _move_close_request_to_tray(
     return True
 
 
+class _CloseActionController:
+    """决定关闭请求走向: 隐藏到托盘, 或带关闭动画退出进程。"""
+
+    def __init__(self) -> None:
+        self.tray_icon: SystemTrayIcon | None = None
+        self.close_to_tray = True
+
+    def closeEvent(
+        self,
+        window: Window,
+        event: WindowCloseEvent,
+        super_close_event,
+    ) -> bool:
+        """处理关闭请求; 返回 True 表示已转为隐藏到托盘。"""
+
+        if self.close_to_tray and _move_close_request_to_tray(
+            window, self.tray_icon, event
+        ):
+            return True
+        # 退出必须走已接受关闭: QML 在本处理器返回后才播放收缩动画, 动画
+        # 收尾 window.close() 后由 quitOnLastWindowClosed 退出进程。这里若
+        # 同步调 app.quit() 会在动画开始前杀死事件循环, 窗口瞬间消失。
+        super_close_event(event)
+        return False
+
+
 class MainWindow(Window):
-    """Main window whose close button hides it to the enabled tray icon."""
+    """Main window whose close button hides it to the tray or quits by setting."""
 
     def __init__(self, window_type: int = WindowType.BAR) -> None:
         super().__init__(window_type=window_type)
-        self._tray_icon: SystemTrayIcon | None = None
+        self._close_controller = _CloseActionController()
 
     def enableCloseToTray(self, tray_icon: SystemTrayIcon) -> None:
-        self._tray_icon = tray_icon
+        self._close_controller.tray_icon = tray_icon
+
+    def setCloseToTray(self, enabled: bool) -> None:
+        self._close_controller.close_to_tray = enabled
 
     def closeEvent(self, event: WindowCloseEvent) -> None:
-        if _move_close_request_to_tray(self, self._tray_icon, event):
-            return
-        super().closeEvent(event)
+        self._close_controller.closeEvent(self, event, super().closeEvent)
 
 
 def _show_main_window(window: Window) -> None:
@@ -311,7 +339,19 @@ def main() -> int:
     )
 
     # 托盘必须在主窗口可关闭前完成装配，避免关闭后留下无入口的后台进程。
-    _enable_system_tray(app, win)
+    tray_icon = _enable_system_tray(app, win)
+
+    def apply_close_action() -> None:
+        quit_on_close = settings_backend.closeAction == CLOSE_ACTION_QUIT
+        win.setCloseToTray(not quit_on_close)
+        if tray_icon is not None:
+            # 退出模式交还 Qt 默认行为: 引擎播完关闭动画、真正关窗后由
+            # lastWindowClosed 退出进程。托盘模式必须禁用, 否则普通关闭
+            # (如托盘失效兜底)也会直接退出。
+            app.setQuitOnLastWindowClosed(quit_on_close)
+
+    apply_close_action()
+    settings_backend.closeActionChanged.connect(apply_close_action)
     win.show()
     return app.exec()
 

@@ -41,6 +41,7 @@ def test_python27_worker_setting_persists_and_applies_to_next_audit(
             "ProjectDirectories": [],
             "NbtFiles": [],
         },
+        "Window": {"CloseAction": "tray"},
     }
 
     monkeypatch.delenv(WORKER_COUNT_ENV, raising=False)
@@ -78,6 +79,31 @@ def test_environment_worker_override_disables_persisted_setting(
     assert overridden.python27Workers == 1
     assert overridden.setPython27Workers(2) is False
     assert _worker_count(1000) == 7
+
+
+def test_close_action_persists_and_rejects_unknown_values(tmp_path) -> None:
+    settings_file = tmp_path / "settings.json"
+    backend = ApplicationSettingsBackend(settings_file=settings_file)
+
+    assert backend.closeAction == "tray"
+    assert backend.setCloseAction("quit") is True
+    assert backend.closeAction == "quit"
+    assert backend.setCloseAction("minimize") is False
+    assert backend.closeAction == "quit"
+
+    reloaded = ApplicationSettingsBackend(settings_file=settings_file)
+
+    assert reloaded.closeAction == "quit"
+
+
+def test_close_action_falls_back_to_tray_for_corrupted_value(tmp_path) -> None:
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(
+        json.dumps({"Window": {"CloseAction": 123}}), encoding="utf-8"
+    )
+    backend = ApplicationSettingsBackend(settings_file=settings_file)
+
+    assert backend.closeAction == "tray"
 
 
 def _with_fresh_config_manager(original):

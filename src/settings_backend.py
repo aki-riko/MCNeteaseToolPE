@@ -27,6 +27,9 @@ from .legacy_pylint_runner import WORKER_COUNT_ENV
 LOGGER = logging.getLogger(__name__)
 
 SETTINGS_FILE_ENV = "MCNETEASE_SETTINGS_FILE"
+CLOSE_ACTION_TRAY = "tray"
+CLOSE_ACTION_QUIT = "quit"
+CLOSE_ACTIONS = (CLOSE_ACTION_TRAY, CLOSE_ACTION_QUIT)
 PRISMQML_CONFIG_FILE_ENV = "MCNETEASE_PRISMQML_CONFIG_FILE"
 APP_DATA_ENV = "APPDATA"
 XDG_CONFIG_HOME_ENV = "XDG_CONFIG_HOME"
@@ -190,6 +193,11 @@ class ApplicationSettings(SettingsCore):
         name="NbtFiles",
         default=[],
     )
+    close_action: ClassVar[SettingEntry] = _StringEntry(
+        group="Window",
+        name="CloseAction",
+        default=CLOSE_ACTION_TRAY,
+    )
 
 
 class ApplicationSettingsBackend(QObject):
@@ -198,6 +206,7 @@ class ApplicationSettingsBackend(QObject):
     python27WorkersChanged = Signal()
     recentProjectPathChanged = Signal()
     recentNbtPathChanged = Signal()
+    closeActionChanged = Signal()
 
     def __init__(
         self,
@@ -223,6 +232,9 @@ class ApplicationSettingsBackend(QObject):
         )
         self._settings.recent_nbt_paths.valueUpdated.connect(
             self._on_recent_nbt_path_changed
+        )
+        self._settings.close_action.valueUpdated.connect(
+            self._on_close_action_changed
         )
         if not self._environment_override_value:
             self._apply_worker_count_to_environment()
@@ -272,6 +284,14 @@ class ApplicationSettingsBackend(QObject):
         legacy = self._settings.get(ApplicationSettings.recent_nbt_path)
         return _unique_paths([*paths, legacy])
 
+    def _get_close_action(self) -> str:
+        value = str(self._settings.get(ApplicationSettings.close_action))
+        return value if value in CLOSE_ACTIONS else CLOSE_ACTION_TRAY
+
+    @Property(str, notify=closeActionChanged)
+    def closeAction(self) -> str:
+        return self._get_close_action()
+
     @Property(int, constant=True)
     def logicalProcessorCount(self) -> int:
         return LOGICAL_PROCESSOR_COUNT
@@ -301,6 +321,10 @@ class ApplicationSettingsBackend(QObject):
     def _on_recent_nbt_path_changed(self, _value: object) -> None:
         self.recentNbtPathChanged.emit()
 
+    @Slot(object)
+    def _on_close_action_changed(self, _value: object) -> None:
+        self.closeActionChanged.emit()
+
     @Slot(int, result=bool)
     def setPython27Workers(self, value: int) -> bool:
         if self._environment_override_value:
@@ -324,11 +348,21 @@ class ApplicationSettingsBackend(QObject):
         paths = _promote_path(self.savedNbtPaths, normalized)
         return self._settings.set(ApplicationSettings.recent_nbt_paths, paths)
 
+    @Slot(str, result=bool)
+    def setCloseAction(self, value: str) -> bool:
+        if value not in CLOSE_ACTIONS:
+            LOGGER.warning("拒绝保存未知的关闭行为：%s", value)
+            return False
+        return self._settings.set(ApplicationSettings.close_action, value)
+
 
 __all__ = [
     "ApplicationSettings",
     "ApplicationSettingsBackend",
     "APP_CONFIG_DIR_NAME",
+    "CLOSE_ACTIONS",
+    "CLOSE_ACTION_QUIT",
+    "CLOSE_ACTION_TRAY",
     "DEFAULT_SETTINGS_FILE",
     "LEGACY_SETTINGS_FILE",
     "LOGICAL_PROCESSOR_COUNT",

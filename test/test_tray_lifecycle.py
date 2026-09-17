@@ -159,6 +159,54 @@ def test_unavailable_tray_keeps_normal_last_window_exit(monkeypatch) -> None:
     assert app.quit_on_last_window_closed is True
 
 
+def test_close_action_controller_hides_to_tray_when_enabled() -> None:
+    """默认行为: 有可见托盘时关闭请求隐藏窗口, 不退出进程。"""
+    controller = main._CloseActionController()
+    controller.tray_icon = _FakeTray()
+    controller.tray_icon.show()
+    event = _FakeEvent()
+    super_calls: list[object] = []
+
+    handled = controller.closeEvent(
+        _FakeWindow(), event, lambda _event: super_calls.append("super")
+    )
+
+    assert handled is True
+    assert event.hide_on_close is True
+    assert super_calls == []
+
+
+def test_close_action_controller_accepts_close_when_quit_selected() -> None:
+    """退出模式走已接受关闭: 交给引擎播完动画后由 quitOnLastWindowClosed 退出。"""
+    controller = main._CloseActionController()
+    controller.close_to_tray = False
+    super_calls: list[object] = []
+    event = _FakeEvent()
+
+    handled = controller.closeEvent(
+        _FakeWindow(), event, lambda _event: super_calls.append("super")
+    )
+
+    assert handled is False
+    assert event.hide_on_close is False
+    assert super_calls == ["super"]
+
+
+def test_close_action_controller_accepts_close_when_tray_is_missing() -> None:
+    """托盘失效时即使选择关闭到托盘也走已接受关闭, 交还正常退出路径。"""
+    controller = main._CloseActionController()
+    controller.tray_icon = None
+    super_calls: list[object] = []
+    event = _FakeEvent()
+
+    handled = controller.closeEvent(
+        _FakeWindow(), event, lambda _event: super_calls.append("super")
+    )
+
+    assert handled is False
+    assert super_calls == ["super"]
+
+
 def test_splash_branding_is_explicit() -> None:
     window = _FakeSplashWindow()
 

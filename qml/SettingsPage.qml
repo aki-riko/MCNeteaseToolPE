@@ -210,6 +210,29 @@ Item {
                     }
                 }
 
+                // 关闭时的行为
+                SettingsCard {
+                    readonly property var closeActionValues: ["tray", "quit"]
+
+                    objectName: "closeActionSettingsCard"
+                    width: parent ? parent.width : 0
+                    icon: page.iconPath("ArrowExit")
+                    title: qsTr("关闭时的行为")
+                    content: qsTr("点击关闭按钮时隐藏到托盘，或直接退出程序。")
+                    type: Enums.settingCard.type_combobox
+                    model: [qsTr("关闭到托盘"), qsTr("退出程序")]
+                    currentIndex: {
+                        var idx = closeActionValues.indexOf(
+                            backend ? backend.closeAction : "tray")
+                        return idx >= 0 ? idx : 0
+                    }
+                    onIndexSelected: function(idx) {
+                        if (backend && idx >= 0 && idx < closeActionValues.length) {
+                            backend.setCloseAction(closeActionValues[idx])
+                        }
+                    }
+                }
+
                 // 云母效果
                 SettingsCard {
                     objectName: "micaSettingsCard"
