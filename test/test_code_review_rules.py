@@ -361,6 +361,14 @@ def test_python27_subprocesses_disable_windows_consoles() -> None:
         assert creation_flags.func.id == "_subprocess_creation_flags"
 
 
+def test_python27_worker_exposes_behavior_pack_roots() -> None:
+    source = Path("src/legacy_pylint_worker.py").read_text(encoding="utf-8")
+
+    assert "def _expose_behavior_pack_roots(files):" in source
+    assert "name.startswith('behavior_')" in source
+    assert "sys.path.insert(0, root)" in source
+
+
 def test_missing_python27_runtime_is_advisory_only(tmp_path: Path, monkeypatch) -> None:
     pack = _behavior_pack(tmp_path)
     (pack / "sample.py").write_text("print 'python2'\n", encoding="utf-8")

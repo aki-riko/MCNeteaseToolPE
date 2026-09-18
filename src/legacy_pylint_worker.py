@@ -16,6 +16,7 @@ import cgi
 import json
 import sys
 import traceback
+import os
 
 from pylint.interfaces import IReporter
 from pylint.reporters import BaseReporter
@@ -90,12 +91,30 @@ def _write_event(payload):
     sys.stdout.flush()
 
 
+def _expose_behavior_pack_roots(files):
+    """Make bundled behavior-pack top-level packages importable to Pylint."""
+    roots = set()
+    for path in files:
+        current = os.path.abspath(path)
+        while current and current != os.path.dirname(current):
+            name = os.path.basename(current).lower()
+            if name.startswith('behavior_'):
+                roots.add(current)
+                break
+            current = os.path.dirname(current)
+    for root in sorted(roots, reverse=True):
+        if root not in sys.path:
+            sys.path.insert(0, root)
+
+
 def _run(payload, file_completed=None):
     files = _string_list(payload, "files")
     message_ids = _string_list(payload, "message_ids")
     ignored_message_ids = _string_list(payload, "ignored_message_ids")
     if not files:
         return []
+
+    _expose_behavior_pack_roots(files)
 
     from pylint.lint import PyLinter, Run
     _skip_disabled_python3_cmp_check()
