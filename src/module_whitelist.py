@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 from functools import lru_cache
 import io
@@ -29,6 +30,7 @@ class ImportReference:
 
     module: str
     line: int
+    dynamic_import: bool = False
 
 
 @lru_cache(maxsize=8)
@@ -120,6 +122,43 @@ def _regex_imports(source: str) -> list[ImportReference]:
     return output
 
 
+def _dynamic_imports(source: str) -> list[ImportReference]:
+    """Extract direct ``__import__(...)`` calls from Python 2-compatible source."""
+
+    output: list[ImportReference] = []
+    ignored = {
+        tokenize.ENCODING,
+        tokenize.NL,
+        tokenize.NEWLINE,
+        tokenize.INDENT,
+        tokenize.DEDENT,
+        tokenize.COMMENT,
+    }
+    try:
+        tokens = [part for part in tokenize.generate_tokens(io.StringIO(source).readline)
+                  if part.type not in ignored and part.type != tokenize.ENDMARKER]
+    except (IndentationError, tokenize.TokenError):
+        return output
+
+    for index, part in enumerate(tokens):
+        if part.type != token.NAME or part.string != "__import__":
+            continue
+        if index and tokens[index - 1].type == token.NAME and tokens[index - 1].string == "def":
+            continue
+        if index + 1 >= len(tokens) or tokens[index + 1].string != "(":
+            continue
+        module = "<动态模块名>"
+        if index + 2 < len(tokens) and tokens[index + 2].type == token.STRING:
+            try:
+                value = ast.literal_eval(tokens[index + 2].string)
+            except (SyntaxError, ValueError):
+                value = None
+            if isinstance(value, str):
+                module = value
+        output.append(ImportReference(module, part.start[0], dynamic_import=True))
+    return output
+
+
 def find_import_references(source: str) -> list[ImportReference]:
     """Extract imports without requiring Python 3-compatible syntax."""
 
@@ -130,7 +169,8 @@ def find_import_references(source: str) -> list[ImportReference]:
             output.append(from_reference)
         output.extend(_plain_imports(statement, handled))
     output.extend(_regex_imports(source))
-    return list({(item.module, item.line): item for item in output}.values())
+    output.extend(_dynamic_imports(source))
+    return list({(item.module, item.line, item.dynamic_import): item for item in output}.values())
 
 
 def collect_local_modules(pack_dir: str, files: Iterable[str]) -> frozenset[str]:
@@ -164,6 +204,9 @@ def find_disallowed_imports(
 
     output: list[ImportReference] = []
     for reference in find_import_references(source):
+        if reference.dynamic_import:
+            output.append(reference)
+            continue
         if reference.module.startswith(".") or reference.module in whitelist:
             continue
         # An exact module that exists inside this behavior pack is developer

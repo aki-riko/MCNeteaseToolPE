@@ -254,8 +254,13 @@ def _append_manual_behavior_issues(
                 LOGGER.warning("行为包脚本无法读取 %s: %s", path, error)
                 continue
         for reference in find_disallowed_imports(source, whitelist, local_modules):
-            detail = f"import {reference.module}（第 {reference.line} 行）"
-            output.append(_issue(18, "error", "使用网易白名单外模块", detail, rel))
+            if reference.dynamic_import:
+                detail = f"__import__({reference.module})（第 {reference.line} 行）"
+                title = "使用内建动态导入 API"
+            else:
+                detail = f"import {reference.module}（第 {reference.line} 行）"
+                title = "使用网易白名单外模块"
+            output.append(_issue(18, "error", title, detail, rel))
 
 
 def _append_historical_compatibility_issues(

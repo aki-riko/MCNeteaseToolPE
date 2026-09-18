@@ -113,6 +113,37 @@ def test_modules_outside_whitelist_are_errors(tmp_path: Path) -> None:
     assert not any("json" in issue.detail for issue in errors)
 
 
+def test_builtin_dynamic_import_api_is_rejected(tmp_path: Path) -> None:
+    pack = _behavior_pack(tmp_path)
+    (pack / "dynamic.py").write_text(
+        "__import__('os')\n"
+        "module_name = 'sys'\n"
+        "__import__(module_name, fromlist=['path'])\n",
+        encoding="utf-8",
+    )
+
+    errors = _code18_errors(tmp_path)
+
+    assert [issue.detail for issue in errors] == [
+        "__import__(os)（第 1 行）",
+        "__import__(<动态模块名>)（第 3 行）",
+    ]
+    assert all(issue.title == "使用内建动态导入 API" for issue in errors)
+
+
+def test_dynamic_import_text_and_function_definition_are_not_rejected(tmp_path: Path) -> None:
+    pack = _behavior_pack(tmp_path)
+    (pack / "not_dynamic.py").write_text(
+        "# __import__('os')\n"
+        "text = \"__import__('sys')\"\n"
+        "def __import__(name):\n"
+        "    return name\n",
+        encoding="utf-8",
+    )
+
+    assert _code18_errors(tmp_path) == []
+
+
 def test_developer_owned_local_modules_are_exempt(tmp_path: Path) -> None:
     pack = _behavior_pack(tmp_path)
     package = pack / "feature"
