@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_PRISMQML_VERSION = "0.5.0.5"
+EXPECTED_PRISMQML_VERSION = "0.5.0.15"
 EXPECTED_MCP_TOOL_NAMES = {
     "process_project",
     "inspect_world_data",
