@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+import gc
 import json
 from pathlib import Path
+import sys
 
 import pytest
+from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer
 
 from src.blocking_repair import (
     BlockingRepairService,
@@ -17,6 +20,7 @@ from src.blocking_repair import (
     REPAIR_RENAME_RESOURCE_ENTITIES,
 )
 from src.blocking_repair_backend import BlockingRepairBackend
+from src.blocking_repair_cli import run_blocking_repair_worker
 from src.pack_scanner import scan
 
 
@@ -186,114 +190,71 @@ def test_project_audit_result_is_adopted_without_rescanning_the_same_project(
     assert state["blockingPreview"][0]["guidance"]
 
 
-def test_qml_backend_dispatches_inspection_and_writes_to_background_pool(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import prismqml
-
+def test_blocking_repair_worker_round_trips_inspection_and_apply(tmp_path: Path) -> None:
     behavior = tmp_path / "behavior_pack"
     _write_manifest(behavior, "data")
-    calls: list[tuple[object, tuple[object, ...]]] = []
+    from io import StringIO
 
-    class _Succeeded:
-        def __init__(self, payload: object) -> None:
-            self._payload = payload
+    request = json.dumps({"operation": "inspect", "projectDir": str(tmp_path)})
+    output = StringIO()
+    assert run_blocking_repair_worker(StringIO(request + "\n"), output) == 0
+    first = json.loads(output.getvalue())
+    assert first["success"] is True
+    repair_id = _repair_id(first["state"], REPAIR_CREATE_REQUIRED_DIRECTORY)
 
-        def connect(self, callback) -> None:
-            callback(self._payload)
-
-    class _Ignored:
-        def connect(self, _callback) -> None:
-            return None
-
-    class _Handle:
-        def __init__(self, payload: object) -> None:
-            self.succeeded = _Succeeded(payload)
-            self.failed = _Ignored()
-
-    def fake_run_in_pool(operation, *arguments):
-        calls.append((operation, arguments))
-        return _Handle(operation(*arguments))
-
-    monkeypatch.setattr(prismqml, "run_in_pool", fake_run_in_pool)
-    backend = BlockingRepairBackend()
-    results: list[dict[str, object]] = []
-    backend.result.connect(results.append)
-
-    backend.inspect(str(tmp_path))
-    repair_id = _repair_id(backend.state, REPAIR_CREATE_REQUIRED_DIRECTORY)
-    backend.applyRepair(repair_id)
-
-    assert len(calls) == 2
+    output = StringIO()
+    request = json.dumps(
+        {"operation": "apply", "projectDir": str(tmp_path), "repairId": repair_id}
+    )
+    assert run_blocking_repair_worker(StringIO(request + "\n"), output) == 0
+    second = json.loads(output.getvalue())
+    assert second["success"] is True
+    assert second["outcome"]["success"] is True
     assert (behavior / "entities").is_dir()
-    assert backend.state["repairableCount"] == 0
-    assert results[-1]["success"] is True
-
-    adopted: list[str] = []
-    backend.auditResultAdopted.connect(adopted.append)
-    issues = [
-        {
-            "code": 37,
-            "codeName": "ManifestJsonError",
-            "severity": "error",
-            "title": "manifest 缺 min_engine_version",
-            "detail": "工程处理失败",
-            "path": str(behavior / "manifest.json"),
-        }
-    ]
-    backend.adoptAuditResult(str(tmp_path), issues)
-
-    assert len(calls) == 3
-    assert backend.projectPath == str(tmp_path.resolve())
-    assert backend.state["source"] == "projectWorkflow"
-    assert adopted == [str(tmp_path.resolve())]
 
 
-def test_qml_backend_undoes_the_last_isolated_cleanup_in_background_pool(
+def test_qml_backend_starts_an_isolated_worker_process(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import prismqml
+    backend = BlockingRepairBackend()
+    assert backend._worker_program() == str(Path(sys.executable).resolve())
+    assert backend._worker_arguments()[-1].endswith("repair_worker.py")
+    assert backend._worker_arguments()[0] == "-u"
 
+
+def test_qml_backend_undoes_the_last_isolated_cleanup_in_worker_process(
+    tmp_path: Path,
+) -> None:
     cache = tmp_path / "__pycache__"
     cache.mkdir()
     cached_file = cache / "module.pyc"
     cached_file.write_bytes(b"cache")
-    calls: list[tuple[object, tuple[object, ...]]] = []
-
-    class _Succeeded:
-        def __init__(self, payload: object) -> None:
-            self._payload = payload
-
-        def connect(self, callback) -> None:
-            callback(self._payload)
-
-    class _Ignored:
-        def connect(self, _callback) -> None:
-            return None
-
-    class _Handle:
-        def __init__(self, payload: object) -> None:
-            self.succeeded = _Succeeded(payload)
-            self.failed = _Ignored()
-
-    def fake_run_in_pool(operation, *arguments):
-        calls.append((operation, arguments))
-        return _Handle(operation(*arguments))
-
-    monkeypatch.setattr(prismqml, "run_in_pool", fake_run_in_pool)
     backend = BlockingRepairBackend()
 
+    app = QCoreApplication.instance() or QCoreApplication([])
+
+    def wait_for_state_change() -> None:
+        loop = QEventLoop()
+        QTimer.singleShot(30_000, loop.quit)
+        backend.stateChanged.connect(loop.quit)
+        loop.exec()
+
     backend.inspect(str(tmp_path))
+    wait_for_state_change()
     repair_id = _repair_id(backend.state, REPAIR_REMOVE_SAFE_RESIDUE)
     backend.applyRepair(repair_id)
+    wait_for_state_change()
 
     assert backend.canUndo is True
     assert not cache.exists()
 
     backend.undoLastRemoval()
+    wait_for_state_change()
 
-    assert len(calls) == 3
     assert backend.canUndo is False
     assert cached_file.read_bytes() == b"cache"
+    backend.deleteLater()
+    app.processEvents()
+    del backend
+    gc.collect()
+    app.processEvents()

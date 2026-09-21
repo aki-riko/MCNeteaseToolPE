@@ -13,6 +13,8 @@ Item {
     property string projectDir: ""
     property bool syncingProjectPath: false
     property var repairState: backend ? (backend.state || {}) : ({})
+    property var pendingRepairItems: []
+    property int pendingRepairIndex: 0
     readonly property bool busy: backend ? backend.busy === true : false
     readonly property bool canUndo: backend ? backend.canUndo === true : false
     readonly property bool hasInspection: repairState.rootPath !== ""
@@ -20,6 +22,7 @@ Item {
     readonly property int auditErrorCount: Number(repairState.auditErrorCount || 0)
     readonly property int auditWarningCount: Number(repairState.auditWarningCount || 0)
     readonly property bool fromProjectWorkflow: repairState.source === "projectWorkflow"
+    readonly property int repairIssueBatchSize: 1
 
     function urlToPath(url) {
         var path = url.toString()
@@ -29,6 +32,35 @@ Item {
 
     function inspectProject() {
         if (backend && projectDir !== "") backend.inspect(projectDir)
+    }
+
+    function clearRepairQueue() {
+        repairAppendTimer.stop()
+        pendingRepairItems = []
+        pendingRepairIndex = 0
+        repairItemsModel.clear()
+    }
+
+    function installRepairItems(items) {
+        clearRepairQueue()
+        pendingRepairItems = items || []
+        appendRepairBatch()
+        if (pendingRepairIndex < pendingRepairItems.length)
+            appendRepairBatch()
+        if (pendingRepairIndex < pendingRepairItems.length) repairAppendTimer.start()
+    }
+
+    function appendRepairBatch() {
+        var source = pendingRepairItems || []
+        var end = Math.min(source.length, pendingRepairIndex + repairIssueBatchSize)
+        for (var i = pendingRepairIndex; i < end; ++i)
+            repairItemsModel.append({"modelData": source[i]})
+        pendingRepairIndex = end
+        if (pendingRepairIndex >= source.length) {
+            repairAppendTimer.stop()
+            pendingRepairItems = []
+            pendingRepairIndex = 0
+        }
     }
 
     function syncBackendProjectPath() {
@@ -53,6 +85,7 @@ Item {
     onProjectDirChanged: {
         if (backend && !syncingProjectPath) backend.reset()
     }
+    onRepairStateChanged: installRepairItems(repairState.items || [])
     onBackendChanged: syncBackendProjectPath()
     Component.onCompleted: syncBackendProjectPath()
 
@@ -307,7 +340,7 @@ Item {
                     }
 
                     Repeater {
-                        model: root.repairState.items || []
+                        model: repairItemsModel
 
                         delegate: RowLayout {
                             required property var modelData
@@ -496,4 +529,13 @@ Item {
             if (root.backend && repairId !== "") root.backend.applyRepair(repairId)
         }
     }
+
+    Timer {
+        id: repairAppendTimer
+        interval: 1
+        repeat: true
+        onTriggered: root.appendRepairBatch()
+    }
+
+    ListModel { id: repairItemsModel }
 }

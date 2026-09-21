@@ -248,6 +248,11 @@ def main() -> int:
 
         return run_mcp_server_cli(sys.argv[2:])
 
+    if sys.argv[1:2] == ["--blocking-repair-worker"]:
+        from src.blocking_repair_cli import run_blocking_repair_worker
+
+        return run_blocking_repair_worker()
+
     cli_status = run_audit_cli(sys.argv[1:])
     if cli_status is not None:
         return cli_status

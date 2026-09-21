@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from functools import partial
 import logging
-from typing import Callable
+import json
+import os
+import sys
 
-from PySide6.QtCore import QObject, Property, Signal, Slot
+from PySide6.QtCore import QObject, Property, QProcess, Signal, Slot
 
 from .blocking_repair import BlockingRepairService, empty_repair_state
 
@@ -16,7 +19,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 class BlockingRepairBackend(QObject):
-    """仅把状态更新留在主线程，扫描与文件写入全部交给后台任务。"""
+    """将扫描、复审和写盘隔离到独立 worker 进程。"""
 
     stateChanged = Signal()
     busyChanged = Signal()
@@ -31,10 +34,15 @@ class BlockingRepairBackend(QObject):
         service: BlockingRepairService | None = None,
     ) -> None:
         super().__init__(parent)
+        # 保留 service 参数兼容旧调用；实际耗时工作在独立 worker 进程中执行。
         self._service = service or BlockingRepairService()
         self._state = empty_repair_state()
         self._busy = False
-        self._task_handle = None
+        self._process: QProcess | None = None
+        self._stdout_buffer = bytearray()
+        self._stderr_buffer = bytearray()
+        self._request_id = 0
+        self._operation_label = "阻塞项修复"
         self._last_undo: dict[str, str] | None = None
         self._project_path = ""
 
@@ -56,16 +64,20 @@ class BlockingRepairBackend(QObject):
 
     @Slot(str)
     def inspect(self, project_dir: str) -> None:
-        self._start_task(
-            lambda: (self._service.inspect(project_dir), None),
+        self._start_process(
+            {"operation": "inspect", "projectDir": project_dir},
             "检查可自动优化项",
             project_path=project_dir,
         )
 
     @Slot(str, list)
     def adoptAuditResult(self, project_dir: str, issues: list[dict[str, object]]) -> None:
-        self._start_task(
-            lambda: (self._service.inspect_from_audit(project_dir, issues), None),
+        self._start_process(
+            {
+                "operation": "inspect_from_audit",
+                "projectDir": project_dir,
+                "issues": [dict(item) for item in issues if isinstance(item, dict)],
+            },
             "同步工程处理的审核阻塞项",
             project_path=project_dir,
             audit_adoption=True,
@@ -77,8 +89,8 @@ class BlockingRepairBackend(QObject):
         if not isinstance(root_path, str) or not root_path:
             self._emit_failure("请先完成一次工程检查")
             return
-        self._start_task(
-            lambda: self._service.apply_and_inspect(root_path, repair_id),
+        self._start_process(
+            {"operation": "apply", "projectDir": root_path, "repairId": repair_id},
             "执行修复",
         )
 
@@ -89,8 +101,8 @@ class BlockingRepairBackend(QObject):
             self._emit_failure("没有可撤销的隔离清理")
             return
         undo = dict(self._last_undo)
-        self._start_task(
-            lambda: self._service.restore_and_inspect(root_path, undo),
+        self._start_process(
+            {"operation": "restore", "projectDir": root_path, "undo": undo},
             "撤销清理",
         )
 
@@ -103,61 +115,134 @@ class BlockingRepairBackend(QObject):
         self._set_project_path("")
         self.stateChanged.emit()
 
-    def _start_task(
+    def _start_process(
         self,
-        operation: Callable[[], object],
+        request: dict[str, object],
         label: str,
         *,
         project_path: str = "",
         audit_adoption: bool = False,
     ) -> None:
-        if self._busy:
+        if self._busy or self._process is not None:
             return
-        from prismqml import run_in_pool
-
         self._set_busy(True)
-        try:
-            handle = run_in_pool(operation)
-        except Exception as error:  # noqa: BLE001 - 调度失败必须反馈至界面
-            LOGGER.exception("阻塞项修复后台任务启动失败")
-            self._set_busy(False)
-            self._emit_failure(f"{label}无法启动:{error}")
-            return
-        self._task_handle = handle
-        handle.succeeded.connect(
-            lambda payload, task=handle: self._finish_task(
-                task,
-                payload,
-                label,
-                project_path,
-                audit_adoption,
+        self._operation_label = label
+        self._request_id += 1
+        process = QProcess(self)
+        process.setProgram(self._worker_program())
+        process.setArguments(self._worker_arguments())
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
+        process.readyReadStandardOutput.connect(self._read_standard_output)
+        process.readyReadStandardError.connect(self._read_standard_error)
+        process.errorOccurred.connect(self._on_process_error)
+        request_bytes = (json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8")
+        process.started.connect(partial(self._write_request, process, request_bytes))
+        process.finished.connect(
+            partial(
+                self._on_process_finished,
+                process,
+                self._request_id,
+                project_path=project_path,
+                audit_adoption=audit_adoption,
             )
         )
-        handle.failed.connect(
-            lambda failure, task=handle: self._fail_task(task, failure, label)
-        )
+        self._process = process
+        self._stdout_buffer.clear()
+        self._stderr_buffer.clear()
+        try:
+            process.start()
+        except Exception as error:  # noqa: BLE001 - 调度失败必须反馈至界面
+            LOGGER.exception("阻塞项修复 worker 启动失败")
+            self._fail_process(f"{label}无法启动:{error}")
+            return
 
-    def _finish_task(
+    @staticmethod
+    def _write_request(process: QProcess, payload: bytes) -> None:
+        if process.state() != QProcess.ProcessState.Running:
+            return
+        process.write(payload)
+        process.closeWriteChannel()
+
+    @staticmethod
+    def _worker_program() -> str:
+        return os.path.abspath(sys.executable)
+
+    @staticmethod
+    def _worker_arguments() -> list[str]:
+        executable_name = os.path.basename(sys.executable).casefold()
+        if executable_name.startswith("python"):
+            entry_point = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "repair_worker.py",
+            )
+            return ["-u", entry_point]
+        return ["--blocking-repair-worker"]
+
+    def _read_standard_output(self) -> None:
+        process = self._process
+        if process is None:
+            return
+        self._stdout_buffer.extend(bytes(process.readAllStandardOutput()))
+
+    def _read_standard_error(self) -> None:
+        process = self._process
+        if process is not None:
+            self._stderr_buffer.extend(bytes(process.readAllStandardError()))
+
+    def _on_process_error(self, error: QProcess.ProcessError) -> None:
+        process = self._process
+        if process is None:
+            return
+        LOGGER.error("阻塞项修复 worker 错误:%s (%s)", error, process.errorString())
+        if error == QProcess.ProcessError.FailedToStart:
+            self._fail_process(f"{self._operation_label}启动失败:{process.errorString()}")
+
+    def _on_process_finished(
         self,
-        handle: object,
-        payload: object,
-        label: str,
+        process: QProcess,
+        request_id: int,
+        exit_code: int,
+        exit_status: QProcess.ExitStatus,
         project_path: str,
         audit_adoption: bool,
     ) -> None:
-        if handle is not self._task_handle:
+        if process is not self._process or request_id != self._request_id:
             return
-        self._task_handle = None
-        self._set_busy(False)
+        self._read_standard_output()
+        self._read_standard_error()
+        payload_line = bytes(self._stdout_buffer).strip()
+        stderr = self._stderr_buffer.decode("utf-8", errors="replace").strip()
+        self._process = None
+        process.deleteLater()
+        if exit_status != QProcess.ExitStatus.NormalExit or exit_code != 0:
+            detail = stderr.splitlines()[-1] if stderr else f"退出码 {exit_code}"
+            self._fail_process(f"{self._operation_label}失败:{detail}")
+            return
         try:
-            state, outcome = payload
+            payload = json.loads(payload_line.decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("worker 返回的 JSON 顶层不是对象")
+            if payload.get("success") is not True:
+                raise ValueError(str(payload.get("message") or "worker 未返回成功结果"))
+            state = payload.get("state")
             if not isinstance(state, dict):
-                raise ValueError("后台任务返回了无效状态")
-            self._state = state
-        except (TypeError, ValueError) as error:
-            LOGGER.error("阻塞项修复后台任务结果无效: %s", error)
-            self._emit_failure(f"{label}失败:{error}")
+                raise ValueError("worker 返回了无效状态")
+            outcome = payload.get("outcome")
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
+            LOGGER.error("阻塞项修复 worker 结果无效:%s", error)
+            self._fail_process(f"{self._operation_label}失败:{error}")
             return
+        self._finish_result(state, outcome, project_path, audit_adoption)
+
+    def _finish_result(
+        self,
+        state: dict[str, object],
+        outcome: object,
+        project_path: str,
+        audit_adoption: bool,
+    ) -> None:
+        self._set_busy(False)
+        self._state = state
         if project_path:
             root_path = state.get("rootPath")
             if isinstance(root_path, str):
@@ -169,14 +254,15 @@ class BlockingRepairBackend(QObject):
             self._update_undo(outcome)
             self.result.emit(outcome)
 
-    def _fail_task(self, handle: object, failure: object, label: str) -> None:
-        if handle is not self._task_handle:
-            return
-        self._task_handle = None
+    def _fail_process(self, message: str) -> None:
+        process = self._process
+        self._process = None
+        if process is not None:
+            process.kill()
+            process.deleteLater()
         self._set_busy(False)
-        exception = getattr(failure, "exception", failure)
-        LOGGER.error("阻塞项修复后台任务失败: %s", exception, exc_info=True)
-        self._emit_failure(f"{label}失败:{exception}")
+        LOGGER.error("阻塞项修复 worker 失败: %s", message)
+        self._emit_failure(message)
 
     def _emit_failure(self, message: str) -> None:
         self._state = {**self._state, "phase": "failed", "message": message}
