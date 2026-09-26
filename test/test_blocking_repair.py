@@ -220,6 +220,7 @@ def test_qml_backend_starts_an_isolated_worker_process(
     assert backend._worker_program() == str(Path(sys.executable).resolve())
     assert backend._worker_arguments()[-1].endswith("repair_worker.py")
     assert backend._worker_arguments()[0] == "-u"
+    backend.deleteLater()
 
 
 def test_qml_backend_undoes_the_last_isolated_cleanup_in_worker_process(
