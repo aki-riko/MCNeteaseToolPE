@@ -74,6 +74,15 @@ def wait_for_scroll_position(flickable, expected, tolerance=4.0, timeout_ms=1500
         QTest.qWait(40)
     return current
 
+def wait_for_capture_button(button, expected_text, timeout_ms=1500):
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while time.monotonic() < deadline:
+        if button.property('text') == expected_text and bool(button.property('enabled')):
+            return
+        QTest.qWait(40)
+    assert button.property('text') == expected_text
+    assert button.property('enabled') is True
+
 app = QApplication.instance() or QApplication([])
 engine = QQmlApplicationEngine()
 EngineManager.set_engine(engine)
@@ -156,8 +165,7 @@ ready_state = {{
 tracy_card.setProperty('state', ready_state)
 details_panel.setProperty('state', ready_state)
 QTest.qWait(100)
-assert capture_button.property('text') == '开始持续监测'
-assert capture_button.property('enabled') is True
+wait_for_capture_button(capture_button, '开始持续监测')
 assert capture_button.property('level') == 1
 assert '已自动识别 Minecraft.Windows.exe' in guide_text.property('text')
 baseline = {{
