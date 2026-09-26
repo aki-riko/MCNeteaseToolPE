@@ -12,6 +12,7 @@ import struct
 import subprocess
 import sys
 
+import httpx
 import pytest
 from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer
 from mcp import ClientSession
@@ -468,27 +469,28 @@ async def _call_real_server(
     endpoint: str,
     project_path: str,
 ) -> tuple[set[str], bool, dict[str, object]]:
-    async with streamable_http_client(endpoint) as (
-        read_stream,
-        write_stream,
-        _session_id,
-    ):
-        async with ClientSession(read_stream, write_stream) as session:
-            await session.initialize()
-            tools = await session.list_tools()
-            refused_process = await session.call_tool(
-                "process_project",
-                {"project_path": project_path},
-            )
-            confirmed_process = await session.call_tool(
-                "process_project",
-                {"project_path": project_path, "confirm": True},
-            )
-            return (
-                {tool.name for tool in tools.tools},
-                refused_process.isError,
-                confirmed_process.structuredContent or {},
-            )
+    async with httpx.AsyncClient(trust_env=False) as http_client:
+        async with streamable_http_client(endpoint, http_client=http_client) as (
+            read_stream,
+            write_stream,
+            _session_id,
+        ):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                tools = await session.list_tools()
+                refused_process = await session.call_tool(
+                    "process_project",
+                    {"project_path": project_path},
+                )
+                confirmed_process = await session.call_tool(
+                    "process_project",
+                    {"project_path": project_path, "confirm": True},
+                )
+                return (
+                    {tool.name for tool in tools.tools},
+                    refused_process.isError,
+                    confirmed_process.structuredContent or {},
+                )
 
 
 def test_qt_backend_auto_starts_serves_real_client_and_stops_with_app(
