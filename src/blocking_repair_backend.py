@@ -10,7 +10,14 @@ import json
 import os
 import sys
 
-from PySide6.QtCore import QObject, Property, QProcess, Signal, Slot
+from PySide6.QtCore import (
+    QObject,
+    Property,
+    QProcess,
+    QProcessEnvironment,
+    Signal,
+    Slot,
+)
 
 from .blocking_repair import BlockingRepairService, empty_repair_state
 
@@ -131,6 +138,7 @@ class BlockingRepairBackend(QObject):
         process = QProcess(self)
         process.setProgram(self._worker_program())
         process.setArguments(self._worker_arguments())
+        process.setProcessEnvironment(self._worker_environment())
         process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
         process.readyReadStandardOutput.connect(self._read_standard_output)
         process.readyReadStandardError.connect(self._read_standard_error)
@@ -177,6 +185,13 @@ class BlockingRepairBackend(QObject):
             )
             return ["-u", entry_point]
         return ["--blocking-repair-worker"]
+
+    @staticmethod
+    def _worker_environment() -> QProcessEnvironment:
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("PYTHONUTF8", "1")
+        environment.insert("PYTHONIOENCODING", "utf-8")
+        return environment
 
     def _read_standard_output(self) -> None:
         process = self._process
