@@ -298,6 +298,8 @@ print('performance page quick capture ok')
 """
     environment = dict(os.environ)
     environment["QT_QPA_PLATFORM"] = "offscreen"
+    environment["PYTHONUTF8"] = "1"
+    environment["PYTHONIOENCODING"] = "utf-8"
     result = subprocess.run(
         [sys.executable, "-c", script],
         cwd=REPO_ROOT,
